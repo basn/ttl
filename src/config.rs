@@ -51,8 +51,8 @@ impl Default for Config {
             protocol: ProbeProtocol::Icmp,
             port: None,
             dns_enabled: true,
-            asn_enabled: true,
-            geo_enabled: true,
+            asn_enabled: false, // Not yet implemented
+            geo_enabled: false, // Not yet implemented
         }
     }
 }

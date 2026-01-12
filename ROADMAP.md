@@ -31,7 +31,9 @@
 
 ### v0.2.0 - Robustness
 - [ ] Receiver panic handler for clean shutdown
-- [ ] Lock contention optimization (batch state updates)
+- [ ] Receiver error tracking (stop after consecutive failures)
+- [ ] Parallel DNS lookups for faster resolution
+- [ ] Hide internal APIs (library boundary cleanup)
 - [ ] Document jitter semantics (RTT variance vs RFC 3550)
 
 ### v0.3.0 - Enrichment

@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ICMP checksum validation for IPv4 Echo Reply
 - Graceful handling of receive buffer size limits
 
+### Security
+- Max TTL validation (capped at 64 to prevent resource exhaustion)
+- Replay file size limit (10MB max to prevent DoS)
+
+### Documentation
+- Troubleshooting section in README (permissions, high loss, IPv6, DNS)
+
 ### Tests
 - 32 unit tests covering ICMP parsing, stats calculation, session state
 - Tests for IPv6 extension headers, ECMP scenarios, edge cases

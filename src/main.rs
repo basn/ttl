@@ -81,8 +81,18 @@ async fn main() -> Result<()> {
 
 /// Load a session from a JSON file
 fn load_session(path: &str) -> Result<Session> {
+    const MAX_REPLAY_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
     let file = File::open(path)
         .with_context(|| format!("Failed to open replay file: {}", path))?;
+
+    // Check file size to prevent DoS via huge JSON
+    let metadata = file.metadata()
+        .with_context(|| format!("Failed to read replay file metadata: {}", path))?;
+    if metadata.len() > MAX_REPLAY_SIZE {
+        anyhow::bail!("Replay file too large (max 10MB): {}", path);
+    }
+
     let reader = BufReader::new(file);
     let session: Session = serde_json::from_reader(reader)
         .with_context(|| format!("Failed to parse replay file: {}", path))?;

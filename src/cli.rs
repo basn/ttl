@@ -122,6 +122,12 @@ impl Args {
             return Err("Max TTL must be at least 1".into());
         }
 
+        // Upper bound to prevent resource exhaustion (255 TTLs = 255 probes/sec)
+        const MAX_SAFE_TTL: u8 = 64;
+        if self.max_ttl > MAX_SAFE_TTL {
+            return Err(format!("Max TTL cannot exceed {}", MAX_SAFE_TTL).into());
+        }
+
         Ok(())
     }
 }

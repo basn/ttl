@@ -118,6 +118,45 @@ ttl 1.1.1.1 --no-tui
 | `Enter` | Expand selected hop |
 | `Esc` | Close popup / Deselect |
 
+## Troubleshooting
+
+### Permission errors
+
+```
+Error: Insufficient permissions for raw sockets
+```
+
+Raw ICMP sockets require elevated privileges. See the [Permissions](#permissions) section above.
+
+### High packet loss
+
+If you see high loss (>10%) to a destination that should be reachable:
+
+1. **Network congestion** - Some routers deprioritize ICMP traffic
+2. **Rate limiting** - Target may rate-limit ICMP responses
+3. **Firewall** - Intermediate firewalls may drop ICMP
+4. **ECMP paths** - Multiple paths with different characteristics
+
+Try increasing the probe interval: `ttl target -i 2.0`
+
+### All hops showing `* * *`
+
+This usually means:
+
+1. **Firewall blocking** - Your outbound ICMP is blocked
+2. **VPN interference** - Some VPNs don't pass ICMP correctly
+3. **Target unreachable** - Verify the IP/hostname is correct
+
+### IPv6 not working
+
+1. Verify IPv6 connectivity: `ping6 2001:4860:4860::8888`
+2. Force IPv6: `ttl -6 google.com`
+3. Check if your ISP supports IPv6
+
+### DNS resolution slow
+
+Reverse DNS lookups can be slow. Disable with `--no-dns` for faster startup.
+
 ## Tech Stack
 
 - **Language**: Rust
