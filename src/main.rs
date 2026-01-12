@@ -208,6 +208,8 @@ async fn run_interactive_mode(
         cancel.clone(),
         config.timeout,
         target_ip.is_ipv6(),
+        config.src_port_base,
+        config.flows,
     );
 
     // Spawn probe engine
@@ -322,6 +324,8 @@ async fn run_batch_mode(
         cancel.clone(),
         config.timeout,
         target_ip.is_ipv6(),
+        config.src_port_base,
+        config.flows,
     );
 
     // Spawn probe engine
@@ -379,6 +383,8 @@ async fn run_streaming_mode(
         cancel.clone(),
         config.timeout,
         target_ip.is_ipv6(),
+        config.src_port_base,
+        config.flows,
     );
 
     // Spawn probe engine

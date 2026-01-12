@@ -53,6 +53,21 @@ pub fn create_udp_dgram_socket(ipv6: bool) -> Result<Socket> {
     Ok(socket)
 }
 
+/// Create a DGRAM UDP socket bound to a specific source port (for multi-flow Paris traceroute)
+pub fn create_udp_dgram_socket_bound(ipv6: bool, src_port: u16) -> Result<Socket> {
+    let socket = create_udp_dgram_socket(ipv6)?;
+
+    // Bind to the specified source port
+    let bind_addr = if ipv6 {
+        SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), src_port)
+    } else {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), src_port)
+    };
+    socket.bind(&SockAddr::from(bind_addr))?;
+
+    Ok(socket)
+}
+
 /// Send a UDP probe to target
 pub fn send_udp_probe(socket: &Socket, payload: &[u8], target: IpAddr, port: u16) -> Result<usize> {
     let addr = SocketAddr::new(target, port);

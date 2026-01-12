@@ -24,6 +24,8 @@ struct BatchedResponse {
     mpls_labels: Option<Vec<MplsLabel>>,
     response_type: IcmpResponseType,
     target: IpAddr,
+    /// Flow ID for Paris/Dublin traceroute ECMP detection
+    flow_id: u8,
 }
 
 /// The receiver listens for ICMP responses and correlates them to probes
@@ -34,6 +36,10 @@ pub struct Receiver {
     timeout: Duration,
     ipv6: bool,
     consecutive_errors: u32,
+    /// Base source port for calculating flow_id from response (Paris/Dublin traceroute)
+    src_port_base: u16,
+    /// Number of flows (for validating derived flow_id is in range)
+    num_flows: u8,
 }
 
 impl Receiver {
@@ -43,6 +49,8 @@ impl Receiver {
         cancel: CancellationToken,
         timeout: Duration,
         ipv6: bool,
+        src_port_base: u16,
+        num_flows: u8,
     ) -> Self {
         Self {
             state,
@@ -51,6 +59,8 @@ impl Receiver {
             timeout,
             ipv6,
             consecutive_errors: 0,
+            src_port_base,
+            num_flows,
         }
     }
 
@@ -90,8 +100,26 @@ impl Receiver {
                         if let Some(parsed) =
                             parse_icmp_response(&buffer[..len], responder, identifier)
                         {
-                            // Find matching pending probe (single lock for removal)
-                            let probe = self.pending.write().remove(&parsed.probe_id);
+                            // Derive flow_id from source port in ICMP error payload
+                            // For UDP/TCP: src_port = src_port_base + flow_id
+                            // For ICMP: src_port is None, flow_id = 0
+                            // Validate range to avoid mis-attribution from NAT rewrites or unrelated errors
+                            let flow_id = parsed
+                                .src_port
+                                .and_then(|p| {
+                                    if p >= self.src_port_base
+                                        && p < self.src_port_base + self.num_flows as u16
+                                    {
+                                        Some((p - self.src_port_base) as u8)
+                                    } else {
+                                        // Port outside expected range - treat as ICMP (flow 0)
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+
+                            // Find matching pending probe (key includes flow_id for multi-flow)
+                            let probe = self.pending.write().remove(&(parsed.probe_id, flow_id));
                             if let Some(probe) = probe {
                                 let rtt = Instant::now().duration_since(probe.sent_at);
 
@@ -103,6 +131,7 @@ impl Receiver {
                                     mpls_labels: parsed.mpls_labels,
                                     response_type: parsed.response_type,
                                     target: probe.target,
+                                    flow_id: probe.flow_id,
                                 });
                             } else {
                                 // Late packet arrival - response came after timeout
@@ -150,7 +179,10 @@ impl Receiver {
                 let mut state = self.state.write();
                 for resp in batch {
                     if let Some(hop) = state.hop_mut(resp.probe_id.ttl) {
+                        // Record aggregate stats (existing behavior)
                         hop.record_response_with_mpls(resp.responder, resp.rtt, resp.mpls_labels);
+                        // Record per-flow stats for Paris/Dublin traceroute ECMP detection
+                        hop.record_flow_response(resp.flow_id, resp.responder, resp.rtt);
                     }
 
                     // Check if we reached the destination
@@ -172,12 +204,14 @@ impl Receiver {
                 let now = Instant::now();
                 let mut pending = self.pending.write();
                 let timeout = self.timeout;
-                pending.retain(|id, probe| {
+                // Key is (ProbeId, flow_id) tuple
+                pending.retain(|(probe_id, _flow_id), probe| {
                     if now.duration_since(probe.sent_at) > timeout {
-                        // Record timeout
+                        // Record timeout (both hop-level and flow-level)
                         let mut state = self.state.write();
-                        if let Some(hop) = state.hop_mut(id.ttl) {
+                        if let Some(hop) = state.hop_mut(probe_id.ttl) {
                             hop.record_timeout();
+                            hop.record_flow_timeout(probe.flow_id);
                         }
                         false
                     } else {
@@ -198,9 +232,11 @@ pub fn spawn_receiver(
     cancel: CancellationToken,
     timeout: Duration,
     ipv6: bool,
+    src_port_base: u16,
+    num_flows: u8,
 ) -> std::thread::JoinHandle<Result<()>> {
     std::thread::spawn(move || {
-        let receiver = Receiver::new(state, pending, cancel, timeout, ipv6);
+        let receiver = Receiver::new(state, pending, cancel, timeout, ipv6, src_port_base, num_flows);
 
         // Catch panics and convert to error with details
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

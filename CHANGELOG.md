@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-01-12
+
+### Added
+- **Paris/Dublin traceroute (ECMP detection)**: Multi-flow probing to discover parallel network paths
+  - New `--flows N` flag: Send probes on N different flows (1-16, default 1)
+  - New `--src-port BASE` flag: Base source port for flow identification (default 50000)
+  - Each flow uses a different source port (UDP/TCP) for path differentiation
+  - Routers using ECMP load balancing will route different flows to different paths
+- **Per-flow path tracking**: Track which responders are seen on each flow
+  - `FlowPathStats` struct tracks sent/received/responder per flow
+  - `Hop::has_ecmp()` detects when multiple paths exist
+  - `Hop::ecmp_paths()` returns list of (flow_id, responder) pairs
+  - `Hop::path_count()` returns number of unique paths discovered
+- **ECMP display in TUI**:
+  - New "Paths" column in main table when `--flows > 1`
+  - Column shows number of unique responders across flows
+  - Highlighted in warning color when ECMP detected (>1 path)
+  - Hop detail view shows per-flow path breakdown with hostnames
+- **Source port extraction**: ICMP error parsing extracts original source port for flow correlation
+
+### Fixed
+- **Loss percentage "pulsing"**: Fixed visual glitch where loss would pulse on each hop
+  - Loss now calculated from completed probes only: `timeouts / (received + timeouts)`
+  - In-flight probes no longer count as temporary losses
+  - Added `timeouts` counter to `Hop` struct for accurate tracking
+
+### Technical
+- Multi-flow UDP probing: Creates separate bound sockets per flow
+- Multi-flow TCP probing: Varies source port in raw SYN packets
+- Flow ID tracked in `PendingProbe` for response correlation
+- `ParsedResponse.src_port` field for flow identification from ICMP errors
+- `PendingMap` keyed by `(ProbeId, flow_id)` to prevent multi-flow entry collisions
+- Flow derivation validates port range to avoid mis-attribution from NAT rewrites
+- Backward compatible: `--flows 1` (default) = identical to previous behavior
+
+### Known Limitations
+- NAT devices may rewrite source ports, causing multi-flow correlation to fail (responses will appear as losses)
+
 ## [0.2.0] - 2025-01-12
 
 ### Added

@@ -13,6 +13,7 @@ Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment.
 - ASN lookup via Team Cymru DNS (enabled by default)
 - GeoIP lookup via MaxMind GeoLite2 database
 - ICMP, UDP, and TCP probing modes with auto-detection
+- **Paris/Dublin traceroute**: Multi-flow probing for ECMP path enumeration
 - Great terminal UX built with ratatui
 - Scriptable mode for CI and automation
 - Reverse DNS resolution (parallel lookups)
@@ -117,6 +118,21 @@ ttl 1.1.1.1 -p tcp --port 443   # Probe HTTPS port
 ttl 1.1.1.1 -p udp --port 53 --fixed-port  # Probe DNS specifically
 ```
 
+### Multi-flow ECMP detection (Paris/Dublin traceroute)
+
+```bash
+# Discover ECMP paths with 4 flows
+ttl 1.1.1.1 --flows 4
+
+# More flows for thorough path enumeration
+ttl 1.1.1.1 --flows 8 -p udp
+
+# Custom source port base
+ttl 1.1.1.1 --flows 4 --src-port 33000
+```
+
+Each flow uses a different source port, causing ECMP routers to route flows along different paths. The TUI shows a "Paths" column when `--flows > 1`, highlighted when multiple paths are detected.
+
 ### Options
 
 ```
@@ -126,6 +142,8 @@ ttl 1.1.1.1 -p udp --port 53 --fixed-port  # Probe DNS specifically
 -p, --protocol <P>   Probe protocol: auto (default), icmp, udp, tcp
 --port <N>           Base port for UDP/TCP probes
 --fixed-port         Use fixed port (disable per-TTL variation)
+--flows <N>          Number of flows for ECMP detection (1-16, default: 1)
+--src-port <N>       Base source port for multi-flow (default: 50000)
 --timeout <S>        Probe timeout in seconds (default: 3)
 -4, --ipv4           Force IPv4
 -6, --ipv6           Force IPv6
@@ -274,7 +292,7 @@ Three jitter metrics are tracked:
 | MPLS labels | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
 | **ECMP** |
 | Multi-path detection | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| Paris traceroute | :construction: | :white_check_mark: | :x: | :x: |
+| Paris traceroute | :white_check_mark: | :white_check_mark: | :x: | :x: |
 | **TUI** |
 | Interactive | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
 | Themes | :white_check_mark: | :white_check_mark: | :x: | :x: |

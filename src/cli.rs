@@ -34,6 +34,14 @@ pub struct Args {
     #[arg(long = "fixed-port")]
     pub fixed_port: bool,
 
+    /// Number of flows for multi-path ECMP detection (1 = classic mode)
+    #[arg(long = "flows", default_value = "1")]
+    pub flows: u8,
+
+    /// Base source port for flow identification
+    #[arg(long = "src-port", default_value = "50000")]
+    pub src_port: u16,
+
     /// Probe timeout in seconds
     #[arg(long = "timeout", default_value = "3")]
     pub timeout: f64,
@@ -134,6 +142,15 @@ impl Args {
         const MAX_SAFE_TTL: u8 = 64;
         if self.max_ttl > MAX_SAFE_TTL {
             return Err(format!("Max TTL cannot exceed {}", MAX_SAFE_TTL));
+        }
+
+        // Validate flows count
+        if self.flows == 0 {
+            return Err("Flows must be at least 1".into());
+        }
+        const MAX_FLOWS: u8 = 16;
+        if self.flows > MAX_FLOWS {
+            return Err(format!("Flows cannot exceed {} (resource limit)", MAX_FLOWS));
         }
 
         Ok(())

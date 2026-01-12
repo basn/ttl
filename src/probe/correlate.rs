@@ -27,6 +27,9 @@ pub struct ParsedResponse {
     pub response_type: IcmpResponseType,
     /// MPLS labels from ICMP extensions (RFC 4950), if present
     pub mpls_labels: Option<Vec<MplsLabel>>,
+    /// Source port from original UDP/TCP packet (for flow identification in Paris/Dublin traceroute)
+    /// This allows the receiver to compute flow_id = src_port - base_src_port
+    pub src_port: Option<u16>,
 }
 
 // ICMP extension constants (RFC 4884, RFC 4950)
@@ -205,6 +208,7 @@ fn parse_icmp_response_v4(
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type: IcmpResponseType::EchoReply,
                 mpls_labels: None, // Echo Reply doesn't have extensions
+                src_port: None,    // ICMP has no source port
             })
         }
         IcmpTypes::TimeExceeded => {
@@ -321,6 +325,7 @@ fn parse_icmp_response_v6(
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type: IcmpResponseType::EchoReply,
                 mpls_labels: None, // Echo Reply doesn't have extensions
+                src_port: None,    // ICMP has no source port
             })
         }
         ICMPV6_TIME_EXCEEDED => {
@@ -405,6 +410,7 @@ fn parse_icmp_error_payload_v4(
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type,
                 mpls_labels,
+                src_port: None, // ICMP has no source port
             })
         }
         IPPROTO_TCP => {
@@ -417,6 +423,8 @@ fn parse_icmp_error_payload_v4(
                 return None;
             }
 
+            // Extract source port for flow identification (Paris/Dublin traceroute)
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
             let probe_id = extract_probe_id_from_tcp(original_payload)?;
 
             Some(ParsedResponse {
@@ -424,6 +432,7 @@ fn parse_icmp_error_payload_v4(
                 probe_id,
                 response_type,
                 mpls_labels,
+                src_port: Some(src_port),
             })
         }
         IPPROTO_UDP => {
@@ -436,6 +445,8 @@ fn parse_icmp_error_payload_v4(
                 return None;
             }
 
+            // Extract source port for flow identification (Paris/Dublin traceroute)
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
             let udp_payload = &original_payload[8..];
             let probe_id = extract_probe_id_from_udp_payload(udp_payload)?;
 
@@ -444,6 +455,7 @@ fn parse_icmp_error_payload_v4(
                 probe_id,
                 response_type,
                 mpls_labels,
+                src_port: Some(src_port),
             })
         }
         _ => None,
@@ -516,6 +528,7 @@ fn parse_icmp_error_payload_v6(
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type,
                 mpls_labels,
+                src_port: None, // ICMP has no source port
             })
         }
         IPPROTO_TCP => {
@@ -528,6 +541,8 @@ fn parse_icmp_error_payload_v6(
                 return None;
             }
 
+            // Extract source port for flow identification (Paris/Dublin traceroute)
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
             let probe_id = extract_probe_id_from_tcp(original_payload)?;
 
             Some(ParsedResponse {
@@ -535,6 +550,7 @@ fn parse_icmp_error_payload_v6(
                 probe_id,
                 response_type,
                 mpls_labels,
+                src_port: Some(src_port),
             })
         }
         IPPROTO_UDP => {
@@ -547,6 +563,8 @@ fn parse_icmp_error_payload_v6(
                 return None;
             }
 
+            // Extract source port for flow identification (Paris/Dublin traceroute)
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
             let udp_payload = &original_payload[8..];
             let probe_id = extract_probe_id_from_udp_payload(udp_payload)?;
 
@@ -555,6 +573,7 @@ fn parse_icmp_error_payload_v6(
                 probe_id,
                 response_type,
                 mpls_labels,
+                src_port: Some(src_port),
             })
         }
         _ => None,

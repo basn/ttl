@@ -190,7 +190,45 @@ impl Widget for HopDetailView<'_> {
                 ]));
             }
 
-            // Other responders
+            // Per-flow paths (Paris/Dublin traceroute ECMP detection)
+            if !self.hop.flow_paths.is_empty() && self.hop.has_ecmp() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled(
+                    "  Per-Flow Paths (ECMP detected):",
+                    Style::default().fg(self.theme.warning),
+                )]));
+
+                let ecmp_paths = self.hop.ecmp_paths();
+                let num_paths = self.hop.path_count();
+                for (flow_id, responder_ip) in &ecmp_paths {
+                    // Look up hostname from responders map
+                    let hostname = self.hop.responders.get(responder_ip)
+                        .and_then(|s| s.hostname.as_ref())
+                        .map(|h| format!(" ({})", h))
+                        .unwrap_or_default();
+
+                    // Mark if this is a unique path
+                    let is_unique = ecmp_paths.iter()
+                        .filter(|(_, ip)| ip == responder_ip)
+                        .count() == 1;
+                    let marker = if is_unique && num_paths > 1 { " ← alt path" } else { "" };
+
+                    lines.push(Line::from(vec![
+                        Span::raw(format!("    Flow {}: ", flow_id)),
+                        Span::raw(format!("{}{}", responder_ip, hostname)),
+                        Span::styled(marker, Style::default().fg(self.theme.shortcut)),
+                    ]));
+                }
+            } else if !self.hop.flow_paths.is_empty() && self.hop.flow_paths.len() > 1 {
+                // Show flows even without ECMP (all same path)
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled("  Flows: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{} (single path)", self.hop.flow_paths.len())),
+                ]));
+            }
+
+            // Other responders (aggregate view)
             if self.hop.responders.len() > 1 {
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![Span::styled(

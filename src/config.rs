@@ -32,6 +32,12 @@ pub struct Config {
     pub port: Option<u16>,
     /// Use fixed port (disable per-TTL variation)
     pub port_fixed: bool,
+    /// Number of flows for multi-path ECMP detection
+    #[serde(default = "default_flows")]
+    pub flows: u8,
+    /// Base source port for flow identification
+    #[serde(default = "default_src_port")]
+    pub src_port_base: u16,
     /// Enable reverse DNS lookups
     pub dns_enabled: bool,
     /// Enable ASN enrichment
@@ -39,6 +45,9 @@ pub struct Config {
     /// Enable geolocation
     pub geo_enabled: bool,
 }
+
+fn default_flows() -> u8 { 1 }
+fn default_src_port() -> u16 { 50000 }
 
 impl Default for Config {
     fn default() -> Self {
@@ -50,6 +59,8 @@ impl Default for Config {
             protocol: ProbeProtocol::Icmp,
             port: None,
             port_fixed: false,
+            flows: 1,
+            src_port_base: 50000,
             dns_enabled: true,
             asn_enabled: true,
             geo_enabled: true,
@@ -81,6 +92,8 @@ impl From<&Args> for Config {
             protocol,
             port,
             port_fixed: args.fixed_port,
+            flows: args.flows,
+            src_port_base: args.src_port,
             dns_enabled: !args.no_dns,
             asn_enabled: !args.no_asn,
             geo_enabled: !args.no_geo,

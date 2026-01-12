@@ -67,8 +67,11 @@ impl Widget for MainView<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        // Build header
-        let header = Row::new(vec![
+        // Check if multi-flow mode is enabled (Paris/Dublin traceroute)
+        let multi_flow = self.session.config.flows > 1;
+
+        // Build header - add "Paths" column if multi-flow enabled
+        let mut header_cells = vec![
             Cell::from("#").style(Style::default().bold()),
             Cell::from("Host").style(Style::default().bold()),
             Cell::from("ASN").style(Style::default().bold()),
@@ -79,9 +82,13 @@ impl Widget for MainView<'_> {
             Cell::from("Max").style(Style::default().bold()),
             Cell::from("StdDev").style(Style::default().bold()),
             Cell::from("Jitter").style(Style::default().bold()),
-            Cell::from("").style(Style::default().bold()), // Sparkline
-        ])
-        .height(1);
+        ];
+        if multi_flow {
+            header_cells.push(Cell::from("Paths").style(Style::default().bold()));
+        }
+        header_cells.push(Cell::from("").style(Style::default().bold())); // Sparkline
+
+        let header = Row::new(header_cells).height(1);
 
         // Build rows - only show hops up to the destination
         let max_display_ttl = self.session.dest_ttl.unwrap_or(self.session.config.max_ttl);
@@ -164,7 +171,7 @@ impl Widget for MainView<'_> {
                     Style::default()
                 };
 
-                Row::new(vec![
+                let mut cells = vec![
                     Cell::from(hop.ttl.to_string()),
                     Cell::from(host),
                     Cell::from(asn_display).style(Style::default().fg(self.theme.text_dim)),
@@ -175,13 +182,28 @@ impl Widget for MainView<'_> {
                     Cell::from(max),
                     Cell::from(stddev),
                     Cell::from(jitter),
-                    Cell::from(sparkline).style(Style::default().fg(sparkline_color)),
-                ])
-                .style(row_style)
+                ];
+
+                // Add "Paths" column if multi-flow mode
+                if multi_flow {
+                    let path_count = hop.path_count();
+                    let paths_style = if hop.has_ecmp() {
+                        // ECMP detected - highlight with warning color
+                        Style::default().fg(self.theme.warning)
+                    } else {
+                        Style::default()
+                    };
+                    cells.push(Cell::from(path_count.to_string()).style(paths_style));
+                }
+
+                cells.push(Cell::from(sparkline).style(Style::default().fg(sparkline_color)));
+
+                Row::new(cells).style(row_style)
             })
             .collect();
 
-        let widths = [
+        // Build column widths - conditional on multi-flow mode
+        let mut widths: Vec<Constraint> = vec![
             Constraint::Length(3),  // #
             Constraint::Min(16),    // Host
             Constraint::Length(13), // ASN
@@ -192,8 +214,11 @@ impl Widget for MainView<'_> {
             Constraint::Length(7),  // Max
             Constraint::Length(7),  // StdDev
             Constraint::Length(7),  // Jitter
-            Constraint::Length(11), // Sparkline
         ];
+        if multi_flow {
+            widths.push(Constraint::Length(6)); // Paths
+        }
+        widths.push(Constraint::Length(11)); // Sparkline
 
         let table = Table::new(rows, widths)
             .header(header)

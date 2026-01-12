@@ -17,10 +17,19 @@ use crate::state::ProbeId;
 pub struct PendingProbe {
     pub sent_at: Instant,
     pub target: IpAddr,
+    /// Flow ID for Paris/Dublin traceroute ECMP detection (0 for single-flow mode)
+    pub flow_id: u8,
 }
 
-/// Thread-safe map of pending probes
-pub type PendingMap = Arc<RwLock<HashMap<ProbeId, PendingProbe>>>;
+/// Key for pending probe lookup: (ProbeId, flow_id)
+///
+/// Flow ID is included in the key because multi-flow mode sends the same ProbeId
+/// for each flow per tick. Without flow_id in the key, entries would overwrite
+/// each other, causing incorrect flow attribution.
+pub type PendingKey = (ProbeId, u8);
+
+/// Thread-safe map of pending probes keyed by (ProbeId, flow_id)
+pub type PendingMap = Arc<RwLock<HashMap<PendingKey, PendingProbe>>>;
 
 /// Create a new empty pending map
 pub fn new_pending_map() -> PendingMap {

@@ -309,18 +309,82 @@ impl ResponderStats {
     }
 }
 
+/// Per-flow path statistics at a hop (for Paris/Dublin traceroute ECMP detection)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FlowPathStats {
+    /// Probes sent on this flow
+    pub sent: u64,
+    /// Responses received on this flow
+    pub received: u64,
+    /// Timed-out probes on this flow
+    #[serde(default)]
+    pub timeouts: u64,
+    /// Primary responder seen on this flow (most common)
+    pub primary_responder: Option<IpAddr>,
+    /// Count of responses per responder IP on this flow
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub responder_counts: HashMap<IpAddr, u64>,
+}
+
+impl FlowPathStats {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a probe was sent on this flow
+    pub fn record_sent(&mut self) {
+        self.sent += 1;
+    }
+
+    /// Record a response from a responder on this flow
+    pub fn record_response(&mut self, responder: IpAddr) {
+        self.received += 1;
+        let count = self.responder_counts.entry(responder).or_insert(0);
+        *count += 1;
+
+        // Update primary responder (most frequent)
+        self.primary_responder = self
+            .responder_counts
+            .iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(ip, _)| *ip);
+    }
+
+    /// Record a timeout on this flow
+    pub fn record_timeout(&mut self) {
+        self.timeouts += 1;
+    }
+
+    /// Loss percentage for this flow (based on completed probes only)
+    pub fn loss_pct(&self) -> f64 {
+        let completed = self.received + self.timeouts;
+        if completed == 0 {
+            0.0
+        } else {
+            (self.timeouts as f64 / completed as f64) * 100.0
+        }
+    }
+}
+
 /// A single hop (TTL level) in the path
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hop {
     pub ttl: u8,
     pub sent: u64,
     pub received: u64,
+    /// Number of timed-out probes (used for accurate loss calculation)
+    #[serde(default)]
+    pub timeouts: u64,
     pub responders: HashMap<IpAddr, ResponderStats>,
     pub primary: Option<IpAddr>, // most frequently seen responder
     /// Rolling window of recent probe results for hop-level loss sparkline
     /// true = response received, false = timeout
     #[serde(skip)]
     pub recent_results: VecDeque<bool>,
+    /// Per-flow path statistics for ECMP detection (Paris/Dublin traceroute)
+    /// Maps flow_id (0-255) to per-flow stats
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub flow_paths: HashMap<u8, FlowPathStats>,
 }
 
 impl Hop {
@@ -329,9 +393,11 @@ impl Hop {
             ttl,
             sent: 0,
             received: 0,
+            timeouts: 0,
             responders: HashMap::new(),
             primary: None,
             recent_results: VecDeque::with_capacity(60),
+            flow_paths: HashMap::new(),
         }
     }
 
@@ -381,8 +447,10 @@ impl Hop {
     /// Timeouts are tracked in `recent_results` for hop-level loss visualization.
     /// Per-responder sparklines only show RTT for actual responses, not timeouts,
     /// to avoid ECMP distortion (we can't know which responder "timed out").
-    /// Hop-level loss percentage (`loss_pct()`) remains accurate.
+    /// Hop-level loss percentage (`loss_pct()`) uses completed probes only.
     pub fn record_timeout(&mut self) {
+        self.timeouts += 1;
+
         // Track in hop-level sparkline (false = timeout/loss)
         self.recent_results.push_back(false);
         if self.recent_results.len() > 60 {
@@ -404,13 +472,85 @@ impl Hop {
         self.primary.and_then(|ip| self.responders.get(&ip))
     }
 
-    /// Loss percentage for this hop
+    /// Loss percentage for this hop (based on completed probes only)
+    ///
+    /// Uses `timeouts / (received + timeouts)` to avoid counting in-flight
+    /// probes as losses, which would cause "pulsing" in the UI.
     pub fn loss_pct(&self) -> f64 {
-        if self.sent == 0 {
+        let completed = self.received + self.timeouts;
+        if completed == 0 {
             0.0
         } else {
-            (1.0 - (self.received as f64 / self.sent as f64)) * 100.0
+            (self.timeouts as f64 / completed as f64) * 100.0
         }
+    }
+
+    /// Record a probe was sent on a specific flow
+    pub fn record_flow_sent(&mut self, flow_id: u8) {
+        self.flow_paths
+            .entry(flow_id)
+            .or_insert_with(FlowPathStats::new)
+            .record_sent();
+    }
+
+    /// Record a response from a responder on a specific flow
+    pub fn record_flow_response(&mut self, flow_id: u8, responder: IpAddr, rtt: Duration) {
+        // Update flow-specific stats
+        self.flow_paths
+            .entry(flow_id)
+            .or_insert_with(FlowPathStats::new)
+            .record_response(responder);
+
+        // Also update aggregate stats (existing behavior)
+        // Note: record_response already handles all hop-level tracking
+        // We just need flow tracking on top
+        let _ = rtt; // RTT is recorded in aggregate stats via record_response
+    }
+
+    /// Record a timeout on a specific flow
+    pub fn record_flow_timeout(&mut self, flow_id: u8) {
+        self.flow_paths
+            .entry(flow_id)
+            .or_insert_with(FlowPathStats::new)
+            .record_timeout();
+    }
+
+    /// Check if ECMP is detected (multiple unique primary responders across flows)
+    pub fn has_ecmp(&self) -> bool {
+        if self.flow_paths.len() < 2 {
+            return false;
+        }
+
+        // Collect unique primary responders across flows
+        let unique_responders: std::collections::HashSet<_> = self
+            .flow_paths
+            .values()
+            .filter_map(|fp| fp.primary_responder)
+            .collect();
+
+        unique_responders.len() > 1
+    }
+
+    /// Get list of (flow_id, primary_responder) pairs for ECMP display
+    /// Only includes flows with a primary responder
+    pub fn ecmp_paths(&self) -> Vec<(u8, IpAddr)> {
+        let mut paths: Vec<_> = self
+            .flow_paths
+            .iter()
+            .filter_map(|(&flow_id, fp)| fp.primary_responder.map(|ip| (flow_id, ip)))
+            .collect();
+        paths.sort_by_key(|(flow_id, _)| *flow_id);
+        paths
+    }
+
+    /// Get number of unique paths detected (unique responders across flows)
+    pub fn path_count(&self) -> usize {
+        let unique_responders: std::collections::HashSet<_> = self
+            .flow_paths
+            .values()
+            .filter_map(|fp| fp.primary_responder)
+            .collect();
+        unique_responders.len().max(if self.primary.is_some() { 1 } else { 0 })
     }
 }
 
@@ -506,9 +646,11 @@ impl Session {
         for hop in &mut self.hops {
             hop.sent = 0;
             hop.received = 0;
+            hop.timeouts = 0;
             hop.responders.clear();
             hop.primary = None;
             hop.recent_results.clear();
+            hop.flow_paths.clear();
         }
     }
 }
@@ -635,23 +777,34 @@ mod tests {
     fn test_hop_loss_calculation() {
         let mut hop = Hop::new(5);
 
-        // No sends = 0% loss
+        // No completed probes = 0% loss (in-flight probes don't count as loss)
         assert_eq!(hop.loss_pct(), 0.0);
 
-        // Record 10 sends
+        // Record 10 sends (still no completed probes)
         for _ in 0..10 {
             hop.record_sent();
         }
 
-        // No responses yet = 100% loss
-        assert_eq!(hop.loss_pct(), 100.0);
+        // No completed probes yet = 0% loss (avoids UI "pulsing")
+        assert_eq!(hop.loss_pct(), 0.0);
 
-        // 7 responses = 30% loss
+        // 7 responses, 3 timeouts = 30% loss (3/10)
         let ip = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
         for _ in 0..7 {
             hop.record_response(ip, Duration::from_millis(10));
         }
+        for _ in 0..3 {
+            hop.record_timeout();
+        }
         assert!((hop.loss_pct() - 30.0).abs() < 0.01);
+
+        // 100% loss case
+        let mut hop2 = Hop::new(6);
+        for _ in 0..5 {
+            hop2.record_sent();
+            hop2.record_timeout();
+        }
+        assert_eq!(hop2.loss_pct(), 100.0);
     }
 
     #[test]
@@ -894,5 +1047,118 @@ mod tests {
         // p50 of remaining samples (44-299) should be around 171ms
         let p50 = stats.p50().unwrap();
         assert!(p50 >= Duration::from_millis(165) && p50 <= Duration::from_millis(180));
+    }
+
+    #[test]
+    fn test_flow_path_stats_basic() {
+        let mut fps = FlowPathStats::new();
+        let ip1 = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        let ip2 = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 2));
+
+        assert_eq!(fps.sent, 0);
+        assert_eq!(fps.received, 0);
+        assert!(fps.primary_responder.is_none());
+        assert_eq!(fps.loss_pct(), 0.0);
+
+        // Record 10 sends (no completed probes yet = 0% loss)
+        for _ in 0..10 {
+            fps.record_sent();
+        }
+        assert_eq!(fps.sent, 10);
+        assert_eq!(fps.loss_pct(), 0.0); // No completed probes yet
+
+        // Record 6 responses from ip1, 2 from ip2, 2 timeouts = 20% loss
+        for _ in 0..6 {
+            fps.record_response(ip1);
+        }
+        for _ in 0..2 {
+            fps.record_response(ip2);
+        }
+        for _ in 0..2 {
+            fps.record_timeout();
+        }
+
+        assert_eq!(fps.received, 8);
+        assert_eq!(fps.timeouts, 2);
+        assert!((fps.loss_pct() - 20.0).abs() < 0.01); // 2/10 = 20% loss
+        assert_eq!(fps.primary_responder, Some(ip1)); // ip1 has most responses
+        assert_eq!(fps.responder_counts.get(&ip1), Some(&6));
+        assert_eq!(fps.responder_counts.get(&ip2), Some(&2));
+    }
+
+    #[test]
+    fn test_hop_flow_tracking() {
+        let mut hop = Hop::new(5);
+        let ip1 = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        let ip2 = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 2));
+
+        // No flows initially
+        assert!(hop.flow_paths.is_empty());
+        assert!(!hop.has_ecmp());
+        assert!(hop.ecmp_paths().is_empty());
+        assert_eq!(hop.path_count(), 0);
+
+        // Record flow 0 probes - all to ip1
+        for _ in 0..5 {
+            hop.record_flow_sent(0);
+            hop.record_flow_response(0, ip1, Duration::from_millis(10));
+        }
+
+        // Single flow doesn't count as ECMP
+        assert!(!hop.has_ecmp());
+        assert_eq!(hop.path_count(), 1);
+        assert_eq!(hop.ecmp_paths(), vec![(0, ip1)]);
+
+        // Record flow 1 probes - all to ip2 (different path!)
+        for _ in 0..5 {
+            hop.record_flow_sent(1);
+            hop.record_flow_response(1, ip2, Duration::from_millis(15));
+        }
+
+        // Now ECMP is detected
+        assert!(hop.has_ecmp());
+        assert_eq!(hop.path_count(), 2);
+        let paths = hop.ecmp_paths();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&(0, ip1)));
+        assert!(paths.contains(&(1, ip2)));
+    }
+
+    #[test]
+    fn test_hop_flow_no_ecmp_same_responder() {
+        let mut hop = Hop::new(3);
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+
+        // Record multiple flows, all to same responder
+        for flow_id in 0..4 {
+            for _ in 0..3 {
+                hop.record_flow_sent(flow_id);
+                hop.record_flow_response(flow_id, ip, Duration::from_millis(10));
+            }
+        }
+
+        // Same responder on all flows = no ECMP
+        assert!(!hop.has_ecmp());
+        assert_eq!(hop.path_count(), 1);
+        assert_eq!(hop.ecmp_paths().len(), 4); // 4 flows, but all same responder
+    }
+
+    #[test]
+    fn test_session_reset_clears_flow_paths() {
+        let target = Target::new("test.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)));
+        let config = Config::default();
+        let mut session = Session::new(target, config);
+
+        // Add flow data
+        if let Some(hop) = session.hop_mut(1) {
+            hop.record_flow_sent(0);
+            hop.record_flow_response(0, IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)), Duration::from_millis(5));
+        }
+
+        assert!(!session.hop(1).unwrap().flow_paths.is_empty());
+
+        // Reset should clear flow_paths
+        session.reset_stats();
+        assert!(session.hop(1).unwrap().flow_paths.is_empty());
     }
 }

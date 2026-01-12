@@ -1,6 +1,6 @@
 # ttl Roadmap
 
-## Current Status (v0.4.0-dev)
+## Current Status (v0.5.0)
 
 ### Core Features
 - [x] ICMP Echo probing with TTL sweep
@@ -10,6 +10,7 @@
 - [x] Enhanced jitter stats (avg, max, last RTT)
 - [x] RTT percentiles (p50, p95, p99) from sample history
 - [x] ECMP detection (multiple responders per TTL)
+- [x] Paris/Dublin traceroute (multi-flow ECMP path enumeration)
 - [x] Reverse DNS resolution (parallel lookups)
 - [x] MPLS label detection (RFC 4884/4950 ICMP extensions)
 - [x] JSON, CSV, and report export formats
@@ -25,6 +26,7 @@
 - [x] TCP SYN probing (`-p tcp`)
 - [x] Protocol auto-detection (`-p auto`, new default)
 - [x] Custom port selection (`--port`, `--fixed-port`)
+- [x] Multi-flow probing (`--flows`, `--src-port`)
 
 ### Enrichment
 - [x] ASN lookup (Team Cymru DNS)
@@ -69,13 +71,13 @@
 - [x] MPLS label detection (ICMP extensions)
 - [x] Network provider/ISP display (ASN column in main table)
 
-### v0.5.0 - Advanced ECMP
-- [ ] Paris traceroute (flow-aware)
-- [ ] Dublin traceroute
-- [ ] Flow-level display (per-path stats)
-- [ ] NAT detection
+### v0.5.0 - Advanced ECMP (Released)
+- [x] Paris traceroute (flow-aware) - multi-flow probing with source port variation
+- [x] Dublin traceroute - systematic flow enumeration via `--flows` flag
+- [x] Flow-level display (per-path stats) - "Paths" column and hop detail view
 
-### v0.6.0 - Multi-target
+### v0.6.0 - Multi-target & Detection
+- [ ] NAT detection
 - [ ] Multiple simultaneous targets
 - [ ] Target groups/presets
 - [ ] Comparative views
