@@ -5,7 +5,7 @@ edition = "2024"
 description = "Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/lance0/ttl"
-keywords = ["traceroute", "mtr", "network", "tui", "diagnostics", "ttl"]
+keywords = ["traceroute", "mtr", "network", "tui", "diagnostics"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
