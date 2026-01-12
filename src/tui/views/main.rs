@@ -1,0 +1,162 @@
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::widgets::{Block, Borders, Cell, Row, Table, Widget};
+
+use crate::state::Session;
+use crate::tui::widgets::sparkline_string;
+
+/// Main table view showing all hops
+pub struct MainView<'a> {
+    session: &'a Session,
+    selected: Option<usize>,
+    paused: bool,
+}
+
+impl<'a> MainView<'a> {
+    pub fn new(session: &'a Session, selected: Option<usize>, paused: bool) -> Self {
+        Self {
+            session,
+            selected,
+            paused,
+        }
+    }
+}
+
+impl Widget for MainView<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Build title
+        let target_str = if let Some(ref hostname) = self.session.target.hostname {
+            format!(
+                "{} ({})",
+                self.session.target.resolved, hostname
+            )
+        } else {
+            self.session.target.resolved.to_string()
+        };
+
+        let status = if self.paused { " [PAUSED]" } else { "" };
+        let probe_count = self.session.total_sent;
+        let interval_ms = self.session.config.interval.as_millis();
+
+        let title = format!(
+            "ttl \u{2500}\u{2500} {} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}",
+            target_str, probe_count, interval_ms, status
+        );
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        // Build header
+        let header = Row::new(vec![
+            Cell::from("#").style(Style::default().bold()),
+            Cell::from("Host").style(Style::default().bold()),
+            Cell::from("Loss%").style(Style::default().bold()),
+            Cell::from("Sent").style(Style::default().bold()),
+            Cell::from("Avg").style(Style::default().bold()),
+            Cell::from("Min").style(Style::default().bold()),
+            Cell::from("Max").style(Style::default().bold()),
+            Cell::from("StdDev").style(Style::default().bold()),
+            Cell::from("Jitter").style(Style::default().bold()),
+            Cell::from("").style(Style::default().bold()), // Sparkline
+        ])
+        .height(1);
+
+        // Build rows
+        let rows: Vec<Row> = self
+            .session
+            .hops
+            .iter()
+            .filter(|h| h.sent > 0)
+            .enumerate()
+            .map(|(idx, hop)| {
+                let is_selected = self.selected == Some(idx);
+
+                let host = if let Some(stats) = hop.primary_stats() {
+                    if let Some(ref hostname) = stats.hostname {
+                        format!("{}", hostname)
+                    } else {
+                        stats.ip.to_string()
+                    }
+                } else if hop.received == 0 {
+                    "* * *".to_string()
+                } else {
+                    "???".to_string()
+                };
+
+                let (avg, min, max, stddev, jitter, sparkline) =
+                    if let Some(stats) = hop.primary_stats() {
+                        if stats.received > 0 {
+                            let recent: Vec<_> = stats.recent.iter().cloned().collect();
+                            (
+                                format!("{:.1}", stats.avg_rtt().as_secs_f64() * 1000.0),
+                                format!("{:.1}", stats.min_rtt.as_secs_f64() * 1000.0),
+                                format!("{:.1}", stats.max_rtt.as_secs_f64() * 1000.0),
+                                format!("{:.1}", stats.stddev().as_secs_f64() * 1000.0),
+                                format!("{:.1}", stats.jitter().as_secs_f64() * 1000.0),
+                                sparkline_string(&recent, 10),
+                            )
+                        } else {
+                            ("-".into(), "-".into(), "-".into(), "-".into(), "-".into(), String::new())
+                        }
+                    } else {
+                        ("-".into(), "-".into(), "-".into(), "-".into(), "-".into(), String::new())
+                    };
+
+                let loss_style = if hop.loss_pct() > 50.0 {
+                    Style::default().fg(Color::Red)
+                } else if hop.loss_pct() > 10.0 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+
+                let row_style = if is_selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                Row::new(vec![
+                    Cell::from(hop.ttl.to_string()),
+                    Cell::from(host),
+                    Cell::from(format!("{:.1}%", hop.loss_pct())).style(loss_style),
+                    Cell::from(hop.sent.to_string()),
+                    Cell::from(avg),
+                    Cell::from(min),
+                    Cell::from(max),
+                    Cell::from(stddev),
+                    Cell::from(jitter),
+                    Cell::from(sparkline).style(Style::default().fg(Color::Green)),
+                ])
+                .style(row_style)
+            })
+            .collect();
+
+        let widths = [
+            Constraint::Length(3),  // #
+            Constraint::Min(20),    // Host
+            Constraint::Length(7),  // Loss%
+            Constraint::Length(6),  // Sent
+            Constraint::Length(8),  // Avg
+            Constraint::Length(8),  // Min
+            Constraint::Length(8),  // Max
+            Constraint::Length(8),  // StdDev
+            Constraint::Length(8),  // Jitter
+            Constraint::Length(12), // Sparkline
+        ];
+
+        let table = Table::new(rows, widths)
+            .header(header)
+            .highlight_style(Style::default().bg(Color::DarkGray));
+
+        table.render(inner, buf);
+    }
+}

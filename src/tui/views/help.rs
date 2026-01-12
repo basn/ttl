@@ -1,0 +1,79 @@
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+
+/// Help overlay
+pub struct HelpView;
+
+impl Widget for HelpView {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Calculate centered popup area
+        let popup_width = 50.min(area.width.saturating_sub(4));
+        let popup_height = 16.min(area.height.saturating_sub(4));
+        let popup_x = (area.width - popup_width) / 2 + area.x;
+        let popup_y = (area.height - popup_height) / 2 + area.y;
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+        // Clear the popup area
+        Clear.render(popup_area, buf);
+
+        let block = Block::default()
+            .title(" Help ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let inner = block.inner(popup_area);
+        block.render(popup_area, buf);
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  q       ", Style::default().fg(Color::Yellow)),
+                Span::raw("Quit"),
+            ]),
+            Line::from(vec![
+                Span::styled("  p       ", Style::default().fg(Color::Yellow)),
+                Span::raw("Pause/Resume probing"),
+            ]),
+            Line::from(vec![
+                Span::styled("  r       ", Style::default().fg(Color::Yellow)),
+                Span::raw("Reset statistics"),
+            ]),
+            Line::from(vec![
+                Span::styled("  e       ", Style::default().fg(Color::Yellow)),
+                Span::raw("Export to JSON"),
+            ]),
+            Line::from(vec![
+                Span::styled("  ?/h     ", Style::default().fg(Color::Yellow)),
+                Span::raw("Show this help"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Up/k    ", Style::default().fg(Color::Yellow)),
+                Span::raw("Move selection up"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Down/j  ", Style::default().fg(Color::Yellow)),
+                Span::raw("Move selection down"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter   ", Style::default().fg(Color::Yellow)),
+                Span::raw("Expand selected hop"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Esc     ", Style::default().fg(Color::Yellow)),
+                Span::raw("Close popup / Deselect"),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  Press any key to close",
+                Style::default().fg(Color::DarkGray),
+            )]),
+        ];
+
+        let paragraph = Paragraph::new(lines);
+        paragraph.render(inner, buf);
+    }
+}
