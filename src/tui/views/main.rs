@@ -4,7 +4,19 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, Widget};
 
 use crate::state::Session;
-use crate::tui::widgets::sparkline_string;
+use crate::tui::widgets::loss_sparkline_string;
+
+/// Truncate a string to max_len characters, adding ellipsis if truncated
+fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        s.to_string()
+    } else if max_len <= 3 {
+        s.chars().take(max_len).collect()
+    } else {
+        let truncated: String = s.chars().take(max_len - 1).collect();
+        format!("{}…", truncated)
+    }
+}
 
 /// Main table view showing all hops
 pub struct MainView<'a> {
@@ -78,34 +90,52 @@ impl Widget for MainView<'_> {
                 let is_selected = self.selected == Some(idx);
 
                 let host = if let Some(stats) = hop.primary_stats() {
-                    if let Some(ref hostname) = stats.hostname {
-                        format!("{}", hostname)
+                    let display = if let Some(ref hostname) = stats.hostname {
+                        hostname.clone()
                     } else {
                         stats.ip.to_string()
-                    }
+                    };
+                    truncate_with_ellipsis(&display, 28)
                 } else if hop.received == 0 {
                     "* * *".to_string()
                 } else {
                     "???".to_string()
                 };
 
-                let (avg, min, max, stddev, jitter, sparkline) =
+                // Generate sparkline from hop-level results (shows both responses and timeouts)
+                let recent: Vec<_> = hop.recent_results.iter().cloned().collect();
+                let sparkline = loss_sparkline_string(&recent, 10);
+
+                // Color sparkline based on recent loss rate
+                let recent_loss = if recent.is_empty() {
+                    0.0
+                } else {
+                    let failures = recent.iter().filter(|&&r| !r).count();
+                    (failures as f64 / recent.len() as f64) * 100.0
+                };
+                let sparkline_color = if recent_loss > 50.0 {
+                    Color::Red
+                } else if recent_loss > 10.0 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
+
+                let (avg, min, max, stddev, jitter) =
                     if let Some(stats) = hop.primary_stats() {
                         if stats.received > 0 {
-                            let recent: Vec<_> = stats.recent.iter().cloned().collect();
                             (
                                 format!("{:.1}", stats.avg_rtt().as_secs_f64() * 1000.0),
                                 format!("{:.1}", stats.min_rtt.as_secs_f64() * 1000.0),
                                 format!("{:.1}", stats.max_rtt.as_secs_f64() * 1000.0),
                                 format!("{:.1}", stats.stddev().as_secs_f64() * 1000.0),
                                 format!("{:.1}", stats.jitter().as_secs_f64() * 1000.0),
-                                sparkline_string(&recent, 10),
                             )
                         } else {
-                            ("-".into(), "-".into(), "-".into(), "-".into(), "-".into(), String::new())
+                            ("-".into(), "-".into(), "-".into(), "-".into(), "-".into())
                         }
                     } else {
-                        ("-".into(), "-".into(), "-".into(), "-".into(), "-".into(), String::new())
+                        ("-".into(), "-".into(), "-".into(), "-".into(), "-".into())
                     };
 
                 let loss_style = if hop.loss_pct() > 50.0 {
@@ -134,7 +164,7 @@ impl Widget for MainView<'_> {
                     Cell::from(max),
                     Cell::from(stddev),
                     Cell::from(jitter),
-                    Cell::from(sparkline).style(Style::default().fg(Color::Green)),
+                    Cell::from(sparkline).style(Style::default().fg(sparkline_color)),
                 ])
                 .style(row_style)
             })

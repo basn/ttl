@@ -134,7 +134,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                     }
                     KeyCode::Char('p') => {
                         ui_state.paused = !ui_state.paused;
-                        // TODO: Actually pause/resume probe engine
+                        // Actually pause/resume probe engine
+                        {
+                            let mut session = state.write();
+                            session.paused = ui_state.paused;
+                        }
                         ui_state.set_status(if ui_state.paused {
                             "Paused"
                         } else {
@@ -142,8 +146,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                         });
                     }
                     KeyCode::Char('r') => {
-                        // Reset stats (would need mutable access)
-                        ui_state.set_status("Stats reset not yet implemented");
+                        // Reset all statistics
+                        {
+                            let mut session = state.write();
+                            session.reset_stats();
+                        }
+                        ui_state.set_status("Stats reset");
                     }
                     KeyCode::Char('e') => {
                         let session = state.read();

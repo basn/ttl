@@ -88,6 +88,21 @@ impl Widget for RttSparkline<'_> {
     }
 }
 
+/// Generate sparkline string for loss pattern (bool = success/failure)
+/// Shows █ for success, × for timeout/loss
+pub fn loss_sparkline_string(data: &[bool], width: usize) -> String {
+    if data.is_empty() {
+        return String::new();
+    }
+
+    let samples: Vec<_> = data.iter().rev().take(width).rev().collect();
+
+    samples
+        .iter()
+        .map(|&&success| if success { '█' } else { '×' })
+        .collect()
+}
+
 /// Generate sparkline string from RTT data
 pub fn sparkline_string(data: &[Option<Duration>], width: usize) -> String {
     if data.is_empty() {

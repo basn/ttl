@@ -308,6 +308,8 @@ pub struct Session {
     pub config: Config,
     pub complete: bool,  // destination reached?
     pub total_sent: u64, // total probes sent across all hops
+    #[serde(skip)]
+    pub paused: bool,    // pause probing (TUI only)
 }
 
 impl Session {
@@ -325,6 +327,7 @@ impl Session {
             config,
             complete: false,
             total_sent: 0,
+            paused: false,
         }
     }
 
@@ -356,6 +359,21 @@ impl Session {
     #[allow(dead_code)]
     pub fn last_responding_hop(&self) -> Option<&Hop> {
         self.hops.iter().rev().find(|h| h.received > 0)
+    }
+
+    /// Reset all statistics while keeping the session structure
+    pub fn reset_stats(&mut self) {
+        self.total_sent = 0;
+        self.complete = false;
+        self.started_at = Utc::now();
+
+        for hop in &mut self.hops {
+            hop.sent = 0;
+            hop.received = 0;
+            hop.responders.clear();
+            hop.primary = None;
+            hop.recent_results.clear();
+        }
     }
 }
 

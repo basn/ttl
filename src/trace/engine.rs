@@ -62,6 +62,14 @@ impl ProbeEngine {
                     break;
                 }
                 _ = interval.tick() => {
+                    // Check if paused
+                    {
+                        let state = self.state.read();
+                        if state.paused {
+                            continue;
+                        }
+                    }
+
                     // Check probe count limit
                     if let Some(count) = self.config.count {
                         if total_sent >= count * self.config.max_ttl as u64 {
