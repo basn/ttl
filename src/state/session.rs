@@ -40,6 +40,34 @@ pub enum IcmpResponseType {
     DestUnreachable(u8),
 }
 
+/// MPLS label from ICMP extension (RFC 4950)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MplsLabel {
+    /// Label value (20 bits, 0-1048575)
+    pub label: u32,
+    /// Traffic Class / Experimental bits (3 bits, 0-7)
+    pub exp: u8,
+    /// Bottom of stack flag
+    pub bottom: bool,
+    /// TTL value (8 bits)
+    pub ttl: u8,
+}
+
+impl MplsLabel {
+    /// Parse a 4-byte MPLS label entry
+    pub fn from_bytes(data: &[u8; 4]) -> Self {
+        // MPLS label format (32 bits):
+        // [Label (20 bits)][Exp (3 bits)][S (1 bit)][TTL (8 bits)]
+        let word = u32::from_be_bytes(*data);
+        Self {
+            label: word >> 12,
+            exp: ((word >> 9) & 0x7) as u8,
+            bottom: ((word >> 8) & 0x1) == 1,
+            ttl: (word & 0xFF) as u8,
+        }
+    }
+}
+
 /// Result of a single probe
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -76,6 +104,9 @@ pub struct ResponderStats {
     pub asn: Option<AsnInfo>,
     pub geo: Option<GeoInfo>,
 
+    /// MPLS labels from ICMP extensions (RFC 4950)
+    pub mpls_labels: Option<Vec<MplsLabel>>,
+
     // Counters
     pub sent: u64,
     pub received: u64,
@@ -89,13 +120,19 @@ pub struct ResponderStats {
     pub m2: f64,       // for stddev calculation
 
     // Jitter (RFC 3550)
-    pub jitter: f64, // microseconds
+    pub jitter: f64,     // microseconds (smoothed)
+    pub jitter_avg: f64, // microseconds (running average)
+    pub jitter_max: f64, // microseconds (maximum observed)
     #[serde(skip)]
     pub last_rtt: Option<Duration>,
 
     // Rolling window for sparkline
     #[serde(skip)]
     pub recent: VecDeque<Option<Duration>>,
+
+    // Sample history for percentile calculations
+    #[serde(skip)]
+    pub samples: VecDeque<Duration>,
 }
 
 impl ResponderStats {
@@ -105,6 +142,7 @@ impl ResponderStats {
             hostname: None,
             asn: None,
             geo: None,
+            mpls_labels: None,
             sent: 0,
             received: 0,
             min_rtt: Duration::MAX,
@@ -112,10 +150,16 @@ impl ResponderStats {
             mean_rtt: 0.0,
             m2: 0.0,
             jitter: 0.0,
+            jitter_avg: 0.0,
+            jitter_max: 0.0,
             last_rtt: None,
             recent: VecDeque::with_capacity(60),
+            samples: VecDeque::with_capacity(256),
         }
     }
+
+    /// Maximum samples to keep for percentile calculations
+    const MAX_SAMPLES: usize = 256;
 
     /// Update stats with a new RTT sample
     pub fn record_response(&mut self, rtt: Duration) {
@@ -142,14 +186,29 @@ impl ResponderStats {
         // Useful for detecting network instability affecting round-trip latency.
         if let Some(last) = self.last_rtt {
             let diff = (rtt_micros - last.as_micros() as f64).abs();
+            // Smoothed jitter (RFC 3550)
             self.jitter += (diff - self.jitter) / 16.0;
+            // Maximum jitter
+            if diff > self.jitter_max {
+                self.jitter_max = diff;
+            }
+            // Average jitter (running mean using Welford-style update)
+            // Note: jitter samples start at received=2, so use (received-1) for count
+            let jitter_count = (self.received - 1) as f64;
+            self.jitter_avg += (diff - self.jitter_avg) / jitter_count;
         }
         self.last_rtt = Some(rtt);
 
-        // Rolling window
+        // Rolling window for sparkline
         self.recent.push_back(Some(rtt));
         if self.recent.len() > 60 {
             self.recent.pop_front();
+        }
+
+        // Sample history for percentiles
+        self.samples.push_back(rtt);
+        if self.samples.len() > Self::MAX_SAMPLES {
+            self.samples.pop_front();
         }
     }
 
@@ -185,9 +244,51 @@ impl ResponderStats {
         Duration::from_micros(variance.sqrt() as u64)
     }
 
-    /// Jitter
+    /// Smoothed jitter (RFC 3550)
     pub fn jitter(&self) -> Duration {
         Duration::from_micros(self.jitter as u64)
+    }
+
+    /// Average jitter
+    pub fn jitter_avg(&self) -> Duration {
+        Duration::from_micros(self.jitter_avg as u64)
+    }
+
+    /// Maximum jitter
+    pub fn jitter_max(&self) -> Duration {
+        Duration::from_micros(self.jitter_max as u64)
+    }
+
+    /// Last observed RTT
+    pub fn last_rtt(&self) -> Option<Duration> {
+        self.last_rtt
+    }
+
+    /// Calculate a percentile from sample history
+    /// p should be in range 0.0-100.0
+    pub fn percentile(&self, p: f64) -> Option<Duration> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let mut sorted: Vec<_> = self.samples.iter().copied().collect();
+        sorted.sort();
+        let idx = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
+        Some(sorted[idx.min(sorted.len() - 1)])
+    }
+
+    /// 50th percentile (median)
+    pub fn p50(&self) -> Option<Duration> {
+        self.percentile(50.0)
+    }
+
+    /// 95th percentile
+    pub fn p95(&self) -> Option<Duration> {
+        self.percentile(95.0)
+    }
+
+    /// 99th percentile
+    pub fn p99(&self) -> Option<Duration> {
+        self.percentile(99.0)
     }
 }
 
@@ -224,6 +325,16 @@ impl Hop {
 
     /// Record a response from a responder
     pub fn record_response(&mut self, ip: IpAddr, rtt: Duration) {
+        self.record_response_with_mpls(ip, rtt, None);
+    }
+
+    /// Record a response from a responder with optional MPLS labels
+    pub fn record_response_with_mpls(
+        &mut self,
+        ip: IpAddr,
+        rtt: Duration,
+        mpls_labels: Option<Vec<MplsLabel>>,
+    ) {
         self.received += 1;
 
         let stats = self
@@ -233,6 +344,11 @@ impl Hop {
         // Note: We use hop-level loss calculation (Hop::loss_pct), not per-responder.
         // ResponderStats tracks response count for display purposes only.
         stats.record_response(rtt);
+
+        // Store MPLS labels if present (only update if we got labels)
+        if mpls_labels.is_some() {
+            stats.mpls_labels = mpls_labels;
+        }
 
         // Track in hop-level sparkline
         self.recent_results.push_back(true);
@@ -416,6 +532,8 @@ mod tests {
         assert_eq!(stats.min_rtt, Duration::MAX);
         assert_eq!(stats.max_rtt, Duration::ZERO);
         assert_eq!(stats.mean_rtt, 0.0);
+        assert_eq!(stats.jitter_avg, 0.0);
+        assert_eq!(stats.jitter_max, 0.0);
         assert_eq!(stats.loss_pct(), 0.0);
     }
 
@@ -466,21 +584,34 @@ mod tests {
         // First sample - no jitter yet
         stats.record_response(Duration::from_millis(10));
         assert_eq!(stats.jitter(), Duration::ZERO);
+        assert_eq!(stats.jitter_avg(), Duration::ZERO);
+        assert_eq!(stats.jitter_max(), Duration::ZERO);
 
         // Second sample with large jump - jitter increases
         stats.record_response(Duration::from_millis(50));
         assert!(stats.jitter() > Duration::ZERO);
+        assert!(stats.jitter_avg() > Duration::ZERO);
+        assert!(stats.jitter_max() > Duration::ZERO);
+
+        // First jitter sample: |50-10| = 40ms
+        assert_eq!(stats.jitter_max(), Duration::from_millis(40));
+        assert_eq!(stats.jitter_avg(), Duration::from_millis(40)); // Only one jitter sample
 
         // Jitter should be smoothed (RFC 3550: j = j + (|d| - j) / 16)
         let jitter_after_2 = stats.jitter();
+        let max_jitter_after_2 = stats.jitter_max();
 
         // Add more stable samples
         for _ in 0..10 {
             stats.record_response(Duration::from_millis(50));
         }
 
-        // Jitter should decrease with stable samples
+        // Smoothed jitter should decrease with stable samples
         assert!(stats.jitter() < jitter_after_2);
+        // Max jitter should remain at 40ms (largest jump was first)
+        assert_eq!(stats.jitter_max(), max_jitter_after_2);
+        // Average jitter should decrease with stable samples
+        assert!(stats.jitter_avg() < Duration::from_millis(40));
     }
 
     #[test]
@@ -699,5 +830,52 @@ mod tests {
         // Most recent should be 60-69ms
         let first_entry = stats.recent.front().unwrap().unwrap();
         assert!(first_entry >= Duration::from_millis(10));
+    }
+
+    #[test]
+    fn test_responder_stats_percentiles() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+        let mut stats = ResponderStats::new(ip);
+
+        // Empty samples should return None
+        assert!(stats.p50().is_none());
+        assert!(stats.p95().is_none());
+        assert!(stats.p99().is_none());
+
+        // Add 100 samples: 1ms, 2ms, ..., 100ms
+        for i in 1..=100 {
+            stats.record_response(Duration::from_millis(i));
+        }
+
+        // p50 should be around 50ms (median)
+        let p50 = stats.p50().unwrap();
+        assert!(p50 >= Duration::from_millis(49) && p50 <= Duration::from_millis(51));
+
+        // p95 should be around 95ms
+        let p95 = stats.p95().unwrap();
+        assert!(p95 >= Duration::from_millis(94) && p95 <= Duration::from_millis(96));
+
+        // p99 should be around 99ms
+        let p99 = stats.p99().unwrap();
+        assert!(p99 >= Duration::from_millis(98) && p99 <= Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_responder_stats_sample_history_capacity() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+        let mut stats = ResponderStats::new(ip);
+
+        // Add 300 samples (more than 256 capacity)
+        for i in 0..300 {
+            stats.record_response(Duration::from_millis(i));
+        }
+
+        // Sample history should be capped at 256
+        assert_eq!(stats.samples.len(), 256);
+
+        // Oldest samples (0-43ms) should be dropped
+        // p50 of remaining samples (44-299) should be around 171ms
+        let p50 = stats.p50().unwrap();
+        assert!(p50 >= Duration::from_millis(165) && p50 <= Duration::from_millis(180));
     }
 }

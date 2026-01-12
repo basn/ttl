@@ -66,7 +66,11 @@ impl Receiver {
                                 // Update state
                                 let mut state = self.state.write();
                                 if let Some(hop) = state.hop_mut(parsed.probe_id.ttl) {
-                                    hop.record_response(parsed.responder, rtt);
+                                    hop.record_response_with_mpls(
+                                        parsed.responder,
+                                        rtt,
+                                        parsed.mpls_labels,
+                                    );
                                 }
 
                                 // Check if we reached the destination

@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "network-programming"]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"  # CancellationToken
+futures = "0.3"     # join_all for parallel DNS
 
 # TUI
 ratatui = "0.28"

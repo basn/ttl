@@ -72,6 +72,9 @@ impl DnsLookup {
     }
 }
 
+/// Maximum concurrent DNS lookups
+const MAX_CONCURRENT_LOOKUPS: usize = 10;
+
 /// Background DNS lookup worker that updates session state
 pub async fn run_dns_worker(
     dns: Arc<DnsLookup>,
@@ -96,14 +99,32 @@ pub async fn run_dns_worker(
                         .collect()
                 };
 
-                // Perform lookups (limited batch size)
-                for ip in ips_to_lookup.into_iter().take(10) {
-                    if cancel.is_cancelled() {
-                        break;
-                    }
+                if ips_to_lookup.is_empty() {
+                    continue;
+                }
 
-                    if let Some(hostname) = dns.reverse_lookup(ip).await {
-                        let mut state = state.write();
+                // Perform parallel DNS lookups (limited batch size)
+                let batch: Vec<IpAddr> = ips_to_lookup
+                    .into_iter()
+                    .take(MAX_CONCURRENT_LOOKUPS)
+                    .collect();
+
+                // Spawn concurrent lookups
+                let futures: Vec<_> = batch
+                    .iter()
+                    .map(|&ip| {
+                        let dns = dns.clone();
+                        async move { (ip, dns.reverse_lookup(ip).await) }
+                    })
+                    .collect();
+
+                // Wait for all lookups to complete
+                let results = futures::future::join_all(futures).await;
+
+                // Update state with results
+                let mut state = state.write();
+                for (ip, hostname) in results {
+                    if let Some(hostname) = hostname {
                         for hop in &mut state.hops {
                             if let Some(stats) = hop.responders.get_mut(&ip) {
                                 stats.hostname = Some(hostname.clone());

@@ -1,4 +1,4 @@
-use crate::state::{IcmpResponseType, ProbeId};
+use crate::state::{IcmpResponseType, MplsLabel, ProbeId};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ipv4::Ipv4Packet;
 use std::net::IpAddr;
@@ -17,6 +17,87 @@ pub struct ParsedResponse {
     pub responder: IpAddr,
     pub probe_id: ProbeId,
     pub response_type: IcmpResponseType,
+    /// MPLS labels from ICMP extensions (RFC 4950), if present
+    pub mpls_labels: Option<Vec<MplsLabel>>,
+}
+
+// ICMP extension constants (RFC 4884, RFC 4950)
+const ICMP_EXT_VERSION: u8 = 2;
+const MPLS_LABEL_STACK_CLASS: u8 = 1;
+const MPLS_LABEL_STACK_TYPE: u8 = 1;
+const MIN_ORIGINAL_DATAGRAM: usize = 128;
+
+/// Parse ICMP extensions from an error message payload (RFC 4884)
+/// Returns MPLS label stack if present (RFC 4950)
+///
+/// The icmp_payload parameter should be the ICMP error payload starting
+/// after the 8-byte ICMP header (i.e., starting with the original datagram).
+/// The icmp_length parameter is the "length" field from the ICMP header
+/// (byte 5 of the full ICMP message), which indicates the original datagram
+/// length in 32-bit words when non-zero.
+fn parse_icmp_extensions_with_length(
+    icmp_payload: &[u8],
+    icmp_length: u8,
+) -> Option<Vec<MplsLabel>> {
+    // RFC 4884: The "length" field indicates original datagram length in 32-bit words
+    // If non-zero, extensions start at (length * 4) bytes
+    // If zero (legacy), extensions start at 128 bytes (if present)
+    let ext_start = if icmp_length > 0 {
+        (icmp_length as usize) * 4
+    } else {
+        MIN_ORIGINAL_DATAGRAM
+    };
+
+    if icmp_payload.len() < ext_start + 4 {
+        return None;
+    }
+
+    let ext_header = &icmp_payload[ext_start..];
+
+    // Version (high nibble of first byte) must be 2
+    let version = (ext_header[0] >> 4) & 0x0F;
+    if version != ICMP_EXT_VERSION {
+        return None;
+    }
+
+    // Skip checksum validation for now (optional in compliant mode)
+    // Parse extension objects starting at offset 4
+    let mut offset = 4;
+    while offset + 4 <= ext_header.len() {
+        // Object header: length (16 bits), class (8 bits), type (8 bits)
+        let obj_length = u16::from_be_bytes([ext_header[offset], ext_header[offset + 1]]) as usize;
+        let obj_class = ext_header[offset + 2];
+        let obj_type = ext_header[offset + 3];
+
+        // Validate object length
+        if obj_length < 4 || offset + obj_length > ext_header.len() {
+            break;
+        }
+
+        // Check for MPLS Label Stack (class=1, type=1)
+        if obj_class == MPLS_LABEL_STACK_CLASS && obj_type == MPLS_LABEL_STACK_TYPE {
+            let label_data = &ext_header[offset + 4..offset + obj_length];
+            let mut labels = Vec::new();
+
+            // Each label entry is 4 bytes
+            for chunk in label_data.chunks_exact(4) {
+                let label = MplsLabel::from_bytes(chunk.try_into().unwrap());
+                labels.push(label);
+                // Stop at bottom of stack
+                if label.bottom {
+                    break;
+                }
+            }
+
+            if !labels.is_empty() {
+                return Some(labels);
+            }
+        }
+
+        offset += obj_length;
+    }
+
+    None
 }
 
 /// Calculate ICMP checksum (RFC 1071)
@@ -115,6 +196,7 @@ fn parse_icmp_response_v4(
                 responder,
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type: IcmpResponseType::EchoReply,
+                mpls_labels: None, // Echo Reply doesn't have extensions
             })
         }
         IcmpTypes::TimeExceeded => {
@@ -230,6 +312,7 @@ fn parse_icmp_response_v6(
                 responder,
                 probe_id: ProbeId::from_sequence(sequence),
                 response_type: IcmpResponseType::EchoReply,
+                mpls_labels: None, // Echo Reply doesn't have extensions
             })
         }
         ICMPV6_TIME_EXCEEDED => {
@@ -254,15 +337,24 @@ fn parse_icmp_error_payload_v4(
     our_identifier: u16,
     response_type: IcmpResponseType,
 ) -> Option<ParsedResponse> {
-    // ICMP error format:
-    // [0-3]  ICMP header (type, code, checksum)
-    // [4-7]  Unused (4 bytes)
+    // ICMP error format (RFC 4884):
+    // [0]    Type
+    // [1]    Code
+    // [2-3]  Checksum
+    // [4]    Unused
+    // [5]    Length (original datagram length in 32-bit words, 0 = legacy)
+    // [6-7]  Unused
     // [8..]  Original IP header + first 8 bytes of original ICMP
+    // [8 + length*4..] ICMP extensions (if length > 0)
+    // [136..] ICMP extensions (if length == 0, legacy mode)
 
     if icmp_data.len() < 8 + 20 + 8 {
         // Need at least ICMP header + IP header + ICMP header
         return None;
     }
+
+    // Extract RFC 4884 length field (byte 5 of ICMP header)
+    let icmp_length = icmp_data[5];
 
     let original_ip_data = &icmp_data[8..];
     let original_ip = Ipv4Packet::new(original_ip_data)?;
@@ -293,10 +385,14 @@ fn parse_icmp_error_payload_v4(
         return None;
     }
 
+    // Try to parse ICMP extensions using RFC 4884 length field
+    let mpls_labels = parse_icmp_extensions_with_length(&icmp_data[8..], icmp_length);
+
     Some(ParsedResponse {
         responder,
         probe_id: ProbeId::from_sequence(sequence),
         response_type,
+        mpls_labels,
     })
 }
 
@@ -311,16 +407,25 @@ fn parse_icmp_error_payload_v6(
     our_identifier: u16,
     response_type: IcmpResponseType,
 ) -> Option<ParsedResponse> {
-    // ICMPv6 error format:
-    // [0-3]  ICMPv6 header (type, code, checksum)
-    // [4-7]  Unused (4 bytes)
+    // ICMPv6 error format (RFC 4884):
+    // [0]    Type
+    // [1]    Code
+    // [2-3]  Checksum
+    // [4]    Unused
+    // [5]    Length (original datagram length in 32-bit words, 0 = legacy)
+    // [6-7]  Unused
     // [8..]  Original IPv6 header (40 bytes) + first 8 bytes of original ICMPv6
+    // [8 + length*4..] ICMP extensions (if length > 0)
+    // [136..] ICMP extensions (if length == 0, legacy mode)
 
     const IPV6_HEADER_LEN: usize = 40;
 
     if icmp_data.len() < 8 + IPV6_HEADER_LEN + 8 {
         return None;
     }
+
+    // Extract RFC 4884 length field (byte 5 of ICMPv6 header)
+    let icmp_length = icmp_data[5];
 
     let original_ipv6_data = &icmp_data[8..];
     let original_icmp_data = &original_ipv6_data[IPV6_HEADER_LEN..];
@@ -344,10 +449,14 @@ fn parse_icmp_error_payload_v6(
         return None;
     }
 
+    // Try to parse ICMP extensions using RFC 4884 length field
+    let mpls_labels = parse_icmp_extensions_with_length(&icmp_data[8..], icmp_length);
+
     Some(ParsedResponse {
         responder,
         probe_id: ProbeId::from_sequence(sequence),
         response_type,
+        mpls_labels,
     })
 }
 
@@ -806,5 +915,234 @@ mod tests {
         assert_eq!(parsed.probe_id.ttl, 12);
         assert_eq!(parsed.probe_id.seq, 3);
         assert!(matches!(parsed.response_type, IcmpResponseType::DestUnreachable(1)));
+    }
+
+    #[test]
+    fn test_mpls_label_parsing() {
+        // Test MplsLabel::from_bytes parsing
+        // Label = 24000 (0x5DC0), Exp = 3, Bottom = true, TTL = 62
+        // Binary: 0000 0101 1101 1100 0000 0111 0011 1110
+        //         |------- label (20) ------||exp||S|TTL|
+        let bytes: [u8; 4] = [0x05, 0xDC, 0x07, 0x3E];
+        let label = MplsLabel::from_bytes(&bytes);
+        assert_eq!(label.label, 24000);
+        assert_eq!(label.exp, 3);
+        assert!(label.bottom);
+        assert_eq!(label.ttl, 62);
+    }
+
+    #[test]
+    fn test_mpls_label_stack_parsing() {
+        // Test parsing MPLS label stack from ICMP extension
+        // Label 1: 16000, Exp=0, S=0, TTL=64
+        // Label 2: 24000, Exp=3, S=1, TTL=62
+        let label1 = MplsLabel {
+            label: 16000,
+            exp: 0,
+            bottom: false,
+            ttl: 64,
+        };
+        let label2 = MplsLabel {
+            label: 24000,
+            exp: 3,
+            bottom: true,
+            ttl: 62,
+        };
+
+        // Encode labels
+        fn encode_label(l: &MplsLabel) -> [u8; 4] {
+            let word = (l.label << 12)
+                | ((l.exp as u32) << 9)
+                | (if l.bottom { 1 << 8 } else { 0 })
+                | (l.ttl as u32);
+            word.to_be_bytes()
+        }
+
+        let l1_bytes = encode_label(&label1);
+        let l2_bytes = encode_label(&label2);
+
+        // Verify parsing roundtrip
+        let parsed1 = MplsLabel::from_bytes(&l1_bytes);
+        assert_eq!(parsed1.label, 16000);
+        assert_eq!(parsed1.exp, 0);
+        assert!(!parsed1.bottom);
+        assert_eq!(parsed1.ttl, 64);
+
+        let parsed2 = MplsLabel::from_bytes(&l2_bytes);
+        assert_eq!(parsed2.label, 24000);
+        assert_eq!(parsed2.exp, 3);
+        assert!(parsed2.bottom);
+        assert_eq!(parsed2.ttl, 62);
+    }
+
+    #[test]
+    fn test_time_exceeded_with_mpls_extension() {
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        let our_id = 0x1234;
+
+        // Build Time Exceeded with MPLS extension
+        // Layout:
+        // [0-19]   Outer IPv4 header (20 bytes)
+        // [20-27]  ICMP header (8 bytes: type, code, checksum, unused)
+        // [28-155] Original datagram (padded to 128 bytes for extensions)
+        // [156-159] Extension header (4 bytes: version, reserved, checksum)
+        // [160-163] MPLS object header (4 bytes: length, class, type)
+        // [164-167] MPLS label entry (4 bytes)
+
+        let mut packet = vec![0u8; 168];
+
+        // Outer IPv4 header
+        packet[0] = 0x45;
+        packet[9] = 1; // ICMP
+
+        // ICMP Time Exceeded
+        packet[20] = 11;  // Type: Time Exceeded
+        packet[21] = 0;   // Code: TTL exceeded
+
+        // Original IP header (at offset 28)
+        packet[28] = 0x45;
+        packet[37] = 1;   // Protocol: ICMP
+
+        // Original ICMP Echo Request (at offset 48)
+        packet[48] = 8;    // Type: Echo Request
+        packet[49] = 0;    // Code: 0
+        packet[52] = 0x12; // Identifier
+        packet[53] = 0x34;
+        let probe_id = ProbeId::new(5, 1);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        // ICMP Extension header (at offset 156 = 28 + 128)
+        // Version 2, reserved, checksum (we skip checksum validation)
+        packet[156] = 0x20; // Version 2 in high nibble
+        packet[157] = 0x00;
+        packet[158] = 0x00; // Checksum (not validated)
+        packet[159] = 0x00;
+
+        // MPLS extension object header (at offset 160)
+        packet[160] = 0x00; // Length high byte
+        packet[161] = 0x08; // Length = 8 (header + 1 label)
+        packet[162] = 0x01; // Class = 1 (MPLS)
+        packet[163] = 0x01; // Type = 1 (Label Stack)
+
+        // MPLS label: label=24000, exp=3, S=1, TTL=62
+        // word = (24000 << 12) | (3 << 9) | (1 << 8) | 62
+        let label_word: u32 = (24000 << 12) | (3 << 9) | (1 << 8) | 62;
+        let label_bytes = label_word.to_be_bytes();
+        packet[164..168].copy_from_slice(&label_bytes);
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 5);
+        assert_eq!(parsed.probe_id.seq, 1);
+        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded);
+
+        // Verify MPLS labels were parsed
+        assert!(parsed.mpls_labels.is_some());
+        let labels = parsed.mpls_labels.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label, 24000);
+        assert_eq!(labels[0].exp, 3);
+        assert!(labels[0].bottom);
+        assert_eq!(labels[0].ttl, 62);
+    }
+
+    #[test]
+    fn test_time_exceeded_with_mpls_rfc4884_length() {
+        // Test RFC 4884 compliant packet with non-zero length field
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+        let our_id = 0x1234;
+
+        // Layout with RFC 4884 length field:
+        // Original datagram = 48 bytes (12 * 4), so length field = 12
+        // Extensions start at offset 28 + 48 = 76
+        let mut packet = vec![0u8; 100];
+
+        // Outer IPv4 header
+        packet[0] = 0x45;
+        packet[9] = 1; // ICMP
+
+        // ICMP Time Exceeded with RFC 4884 length field
+        packet[20] = 11;  // Type: Time Exceeded
+        packet[21] = 0;   // Code: TTL exceeded
+        packet[25] = 12;  // Length = 12 (48 bytes of original datagram)
+
+        // Original IP header (at offset 28)
+        packet[28] = 0x45;
+        packet[37] = 1;   // Protocol: ICMP
+
+        // Original ICMP Echo Request (at offset 48)
+        packet[48] = 8;    // Type: Echo Request
+        packet[52] = 0x12; // Identifier
+        packet[53] = 0x34;
+        let probe_id = ProbeId::new(3, 2);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        // Extension header at offset 76 (28 + 48)
+        packet[76] = 0x20; // Version 2
+        packet[77] = 0x00;
+        packet[78] = 0x00; // Checksum
+        packet[79] = 0x00;
+
+        // MPLS object header at offset 80
+        packet[80] = 0x00;
+        packet[81] = 0x08; // Length = 8
+        packet[82] = 0x01; // Class = 1 (MPLS)
+        packet[83] = 0x01; // Type = 1
+
+        // MPLS label: label=16000, exp=0, S=1, TTL=64
+        let label_word: u32 = (16000 << 12) | (0 << 9) | (1 << 8) | 64;
+        let label_bytes = label_word.to_be_bytes();
+        packet[84..88].copy_from_slice(&label_bytes);
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 3);
+        assert_eq!(parsed.probe_id.seq, 2);
+
+        // Verify MPLS labels were parsed using RFC 4884 length field
+        assert!(parsed.mpls_labels.is_some());
+        let labels = parsed.mpls_labels.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label, 16000);
+        assert_eq!(labels[0].ttl, 64);
+    }
+
+    #[test]
+    fn test_time_exceeded_without_extension() {
+        // Same test as test_parse_time_exceeded_v4 but verify no MPLS labels
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
+        let our_id = 0xABCD;
+
+        // Packet without extensions (too short for extensions)
+        let mut packet = vec![0u8; 56];
+
+        packet[0] = 0x45;
+        packet[9] = 1;
+        packet[20] = 11;
+        packet[21] = 0;
+        packet[28] = 0x45;
+        packet[37] = 1;
+        packet[48] = 8;
+        packet[52] = 0xAB;
+        packet[53] = 0xCD;
+        let probe_id = ProbeId::new(5, 3);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        // Should have no MPLS labels (packet too short)
+        assert!(parsed.mpls_labels.is_none());
     }
 }

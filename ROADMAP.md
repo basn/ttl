@@ -7,8 +7,11 @@
 - [x] IPv4 and IPv6 support with extension header handling
 - [x] Real-time TUI with ratatui
 - [x] Hop statistics (loss, min/avg/max, stddev, jitter)
+- [x] Enhanced jitter stats (avg, max, last RTT)
+- [x] RTT percentiles (p50, p95, p99) from sample history
 - [x] ECMP detection (multiple responders per TTL)
-- [x] Reverse DNS resolution
+- [x] Reverse DNS resolution (parallel lookups)
+- [x] MPLS label detection (RFC 4884/4950 ICMP extensions)
 - [x] JSON, CSV, and report export formats
 - [x] Session replay from saved JSON
 - [x] Pause/resume probing
@@ -18,7 +21,7 @@
 
 ### TUI Features
 - [x] Interactive hop selection with j/k navigation
-- [x] Hop detail modal view
+- [x] Hop detail modal view (with percentiles, jitter, MPLS)
 - [x] Loss-aware sparkline visualization
 - [x] Help overlay
 - [x] Status bar with keybind hints
@@ -35,7 +38,7 @@
 ### v0.2.0 - Robustness
 - [ ] Receiver panic handler for clean shutdown
 - [ ] Receiver error tracking (stop after consecutive failures)
-- [ ] Parallel DNS lookups for faster resolution
+- [x] Parallel DNS lookups for faster resolution
 - [ ] Hide internal APIs (library boundary cleanup)
 - [ ] Document jitter semantics (RTT variance vs RFC 3550)
 - [ ] High-rate mode optimizations (max drain count, reduced lock contention)
@@ -49,7 +52,7 @@
 ### v0.4.0 - Enrichment
 - [ ] ASN lookup (Team Cymru / MaxMind GeoLite2)
 - [ ] Geolocation display
-- [ ] MPLS label detection (ICMP extensions)
+- [x] MPLS label detection (ICMP extensions)
 - [ ] Network provider/ISP display
 
 ### v0.5.0 - Advanced ECMP

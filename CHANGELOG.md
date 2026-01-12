@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Enhanced jitter statistics**: avg_jitter, max_jitter, and last_rtt now tracked and displayed
+- **RTT percentiles**: p50, p95, p99 calculated from sample history (last 256 samples)
+- **MPLS label parsing**: RFC 4884/4950 ICMP extensions parsed for MPLS label stacks
+- **Enhanced hop detail view**: Now displays percentiles, enhanced jitter stats, last RTT, and MPLS labels
+- **Parallel DNS resolution**: Up to 10 concurrent reverse DNS lookups for faster hostname resolution
+
 ### Fixed
 - **Startup false drops**: Fixed race condition where fast ICMP responses arrived before probe was registered
   - Shared pending map with insert-before-send eliminates registration race
   - Socket drain before timeout cleanup prevents dropping queued responses
 - Improved accuracy for low-latency first hops
+
+### Technical
+- Added `futures` crate for parallel async operations
+- Sample history stored in circular buffer (256 entries) for percentile calculations
+- MplsLabel struct with RFC 4950 format parsing
+- MPLS extension parsing uses RFC 4884 length field (not fixed 128-byte offset)
+- Clarified jitter UI labels to distinguish smoothed vs raw sample stats
 
 ## [0.1.2] - 2025-01-12
 

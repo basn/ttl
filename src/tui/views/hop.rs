@@ -128,6 +128,7 @@ impl Widget for HopDetailView<'_> {
 
             // RTT stats
             if stats.received > 0 {
+                // Basic latency stats
                 lines.push(Line::from(vec![
                     Span::styled("  Min: ", Style::default().fg(self.theme.text_dim)),
                     Span::raw(format!("{:.2}ms    ", stats.min_rtt.as_secs_f64() * 1000.0)),
@@ -137,11 +138,55 @@ impl Widget for HopDetailView<'_> {
                     Span::raw(format!("{:.2}ms", stats.max_rtt.as_secs_f64() * 1000.0)),
                 ]));
 
+                // Last RTT and StdDev
+                let last_rtt = stats
+                    .last_rtt()
+                    .map(|d| format!("{:.2}ms", d.as_secs_f64() * 1000.0))
+                    .unwrap_or_else(|| "-".to_string());
                 lines.push(Line::from(vec![
-                    Span::styled("  StdDev: ", Style::default().fg(self.theme.text_dim)),
-                    Span::raw(format!("{:.2}ms    ", stats.stddev().as_secs_f64() * 1000.0)),
-                    Span::styled("Jitter: ", Style::default().fg(self.theme.text_dim)),
-                    Span::raw(format!("{:.2}ms", stats.jitter().as_secs_f64() * 1000.0)),
+                    Span::styled("  Last: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:<9}", last_rtt)),
+                    Span::styled("StdDev: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:.2}ms", stats.stddev().as_secs_f64() * 1000.0)),
+                ]));
+
+                // Percentiles (if we have enough samples)
+                if let (Some(p50), Some(p95), Some(p99)) = (stats.p50(), stats.p95(), stats.p99()) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  p50: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{:.2}ms    ", p50.as_secs_f64() * 1000.0)),
+                        Span::styled("p95: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{:.2}ms    ", p95.as_secs_f64() * 1000.0)),
+                        Span::styled("p99: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{:.2}ms", p99.as_secs_f64() * 1000.0)),
+                    ]));
+                }
+
+                lines.push(Line::from(""));
+
+                // Jitter stats (RTT variance between consecutive probes)
+                // "Smoothed" = RFC 3550 exponential average, "Avg/Max" = raw sample deltas
+                lines.push(Line::from(vec![
+                    Span::styled("  Jitter (smoothed): ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:.2}ms  ", stats.jitter().as_secs_f64() * 1000.0)),
+                    Span::styled("Avg: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:.2}ms  ", stats.jitter_avg().as_secs_f64() * 1000.0)),
+                    Span::styled("Max: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:.2}ms", stats.jitter_max().as_secs_f64() * 1000.0)),
+                ]));
+            }
+
+            // MPLS labels (if present)
+            if let Some(ref labels) = stats.mpls_labels {
+                lines.push(Line::from(""));
+                let label_str = labels
+                    .iter()
+                    .map(|l| format!("{} (TTL {})", l.label, l.ttl))
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+                lines.push(Line::from(vec![
+                    Span::styled("  MPLS: ", Style::default().fg(self.theme.text_dim)),
+                    Span::styled(label_str, Style::default().fg(self.theme.shortcut)),
                 ]));
             }
 
