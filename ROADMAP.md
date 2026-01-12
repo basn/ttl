@@ -40,30 +40,43 @@
 - [ ] Document jitter semantics (RTT variance vs RFC 3550)
 - [ ] High-rate mode optimizations (max drain count, reduced lock contention)
 
-### v0.3.0 - Enrichment
-- [ ] ASN lookup via MaxMind GeoLite2
-- [ ] Geolocation display
-- [ ] IP-to-ASN mapping
-- [ ] Network path visualization
-
-### v0.4.0 - Multi-target
-- [ ] Multiple simultaneous targets
-- [ ] Target groups/presets
-- [ ] Comparative views
-
-### v0.5.0 - Advanced Probing
+### v0.3.0 - Probing Modes
 - [ ] UDP probing mode
 - [ ] TCP SYN probing mode
 - [ ] Custom port selection
+- [ ] Protocol auto-detection fallback
+
+### v0.4.0 - Enrichment
+- [ ] ASN lookup (Team Cymru / MaxMind GeoLite2)
+- [ ] Geolocation display
+- [ ] MPLS label detection (ICMP extensions)
+- [ ] Network provider/ISP display
+
+### v0.5.0 - Advanced ECMP
 - [ ] Paris traceroute (flow-aware)
+- [ ] Dublin traceroute
+- [ ] Flow-level display (per-path stats)
+- [ ] NAT detection
+
+### v0.6.0 - Multi-target
+- [ ] Multiple simultaneous targets
+- [ ] Target groups/presets
+- [ ] Comparative views
+- [ ] Split-screen mode
+
+### v0.7.0 - TUI Polish
+- [ ] Customizable columns
+- [ ] Custom keybindings
+- [ ] World map visualization (optional)
+- [ ] Hop privacy mode (hide sensitive IPs)
 
 ### Future Ideas
 - [ ] Historical data storage
 - [ ] Alert thresholds (latency/loss)
 - [ ] Web UI mode
 - [ ] Prometheus metrics export
-- [ ] MPLS label detection
 - [ ] Path MTU discovery
+- [ ] Multi-language TUI
 
 ## Non-Goals
 - Full packet capture/analysis (use tcpdump/wireshark)

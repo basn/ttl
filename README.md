@@ -199,6 +199,40 @@ Reverse DNS lookups can be slow. Disable with `--no-dns` for faster startup.
 - **Sockets**: socket2 + pnet
 - **DNS**: hickory-resolver
 
+## Comparison with Similar Tools
+
+| Feature | ttl | [Trippy](https://trippy.rs/) | [MTR](https://github.com/traviscross/mtr) | [NextTrace](https://github.com/nxtrace/NTrace-core) |
+|---------|:---:|:---:|:---:|:---:|
+| **Protocols** |
+| ICMP | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| UDP | :construction: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| TCP | :construction: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| **Statistics** |
+| Loss % | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Min/Avg/Max RTT | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Jitter | :white_check_mark: | :white_check_mark: | :x: | :x: |
+| Std deviation | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
+| **Enrichment** |
+| Reverse DNS | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| ASN lookup | :construction: | :white_check_mark: | :x: | :white_check_mark: |
+| GeoIP | :construction: | :white_check_mark: | :x: | :white_check_mark: |
+| MPLS labels | :construction: | :white_check_mark: | :white_check_mark: | :x: |
+| **ECMP** |
+| Multi-path detection | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Paris traceroute | :construction: | :white_check_mark: | :x: | :x: |
+| **TUI** |
+| Interactive | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
+| Themes | :white_check_mark: | :white_check_mark: | :x: | :x: |
+| Theme persistence | :white_check_mark: | :white_check_mark: | :x: | :x: |
+| Sparklines/charts | :white_check_mark: | :white_check_mark: | :x: | :x: |
+| World map | :x: | :white_check_mark: | :x: | :white_check_mark: |
+| **Export** |
+| JSON | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| CSV | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
+| Session replay | :white_check_mark: | :x: | :x: | :x: |
+
+:white_check_mark: = supported | :construction: = planned | :x: = not supported
+
 ## License
 
 Licensed under either of:
