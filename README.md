@@ -39,6 +39,14 @@ sudo setcap cap_net_raw+ep $(which ttl)
 sudo sysctl -w net.ipv4.ping_group_range='0 65534'
 ```
 
+## Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Linux | Full support | Raw sockets require `CAP_NET_RAW` or root |
+| macOS | Full support | Requires root |
+| Windows | Not supported | Would require WinPcap/Npcap |
+
 ## Usage
 
 ### Interactive TUI (default)

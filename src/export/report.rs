@@ -16,8 +16,10 @@ pub fn generate_report<W: Write>(session: &Session, mut writer: W) -> std::io::R
     )?;
     writeln!(writer, "{}", "-".repeat(110))?;
 
+    // Only show hops up to the destination
+    let max_ttl = session.dest_ttl.unwrap_or(session.config.max_ttl);
     for hop in &session.hops {
-        if hop.sent == 0 {
+        if hop.sent == 0 || hop.ttl > max_ttl {
             continue;
         }
 

@@ -11,9 +11,10 @@ pub fn export_csv<W: Write>(session: &Session, mut writer: W) -> Result<()> {
         "ttl,ip,hostname,loss_pct,sent,recv,avg_ms,min_ms,max_ms,stddev_ms,jitter_ms"
     )?;
 
-    // Write rows for each hop
+    // Write rows for each hop (only up to destination)
+    let max_ttl = session.dest_ttl.unwrap_or(session.config.max_ttl);
     for hop in &session.hops {
-        if hop.sent == 0 {
+        if hop.sent == 0 || hop.ttl > max_ttl {
             continue;
         }
 

@@ -79,12 +79,13 @@ impl Widget for MainView<'_> {
         ])
         .height(1);
 
-        // Build rows
+        // Build rows - only show hops up to the destination
+        let max_display_ttl = self.session.dest_ttl.unwrap_or(self.session.config.max_ttl);
         let rows: Vec<Row> = self
             .session
             .hops
             .iter()
-            .filter(|h| h.sent > 0)
+            .filter(|h| h.sent > 0 && h.ttl <= max_display_ttl)
             .enumerate()
             .map(|(idx, hop)| {
                 let is_selected = self.selected == Some(idx);

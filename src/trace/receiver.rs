@@ -106,6 +106,11 @@ impl Receiver {
                             if matches!(parsed.response_type, IcmpResponseType::EchoReply) {
                                 if parsed.responder == probe.target {
                                     state.complete = true;
+                                    // Track the lowest TTL that reached the destination
+                                    let ttl = parsed.probe_id.ttl;
+                                    if state.dest_ttl.is_none() || ttl < state.dest_ttl.unwrap() {
+                                        state.dest_ttl = Some(ttl);
+                                    }
                                 }
                             }
                         } else {

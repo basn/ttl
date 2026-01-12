@@ -306,10 +306,11 @@ pub struct Session {
     pub started_at: DateTime<Utc>,
     pub hops: Vec<Hop>,
     pub config: Config,
-    pub complete: bool,  // destination reached?
-    pub total_sent: u64, // total probes sent across all hops
+    pub complete: bool,      // destination reached?
+    pub dest_ttl: Option<u8>, // TTL at which destination was reached (actual hop count)
+    pub total_sent: u64,     // total probes sent across all hops
     #[serde(skip)]
-    pub paused: bool,    // pause probing (TUI only)
+    pub paused: bool,        // pause probing (TUI only)
 }
 
 impl Session {
@@ -326,6 +327,7 @@ impl Session {
             hops,
             config,
             complete: false,
+            dest_ttl: None,
             total_sent: 0,
             paused: false,
         }
@@ -365,6 +367,7 @@ impl Session {
     pub fn reset_stats(&mut self) {
         self.total_sent = 0;
         self.complete = false;
+        self.dest_ttl = None;
         self.started_at = Utc::now();
 
         for hop in &mut self.hops {
@@ -604,5 +607,97 @@ mod tests {
         assert_eq!(restored.target.original, "test.com");
         assert_eq!(restored.hop(1).unwrap().sent, 1);
         assert_eq!(restored.hop(1).unwrap().received, 1);
+    }
+
+    #[test]
+    fn test_session_reset_stats() {
+        let target = Target::new("test.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)));
+        let config = Config::default();
+        let mut session = Session::new(target, config);
+
+        // Add some data
+        session.total_sent = 100;
+        session.complete = true;
+        session.dest_ttl = Some(5);
+
+        if let Some(hop) = session.hop_mut(1) {
+            hop.record_sent();
+            hop.record_response(
+                IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)),
+                Duration::from_millis(5),
+            );
+        }
+
+        // Reset
+        session.reset_stats();
+
+        // Verify reset
+        assert_eq!(session.total_sent, 0);
+        assert!(!session.complete);
+        assert!(session.dest_ttl.is_none());
+        assert_eq!(session.hop(1).unwrap().sent, 0);
+        assert_eq!(session.hop(1).unwrap().received, 0);
+        assert!(session.hop(1).unwrap().responders.is_empty());
+    }
+
+    #[test]
+    fn test_responder_stats_extreme_rtts() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+        let mut stats = ResponderStats::new(ip);
+
+        // Test with sub-millisecond RTT
+        stats.record_response(Duration::from_micros(100));
+        assert_eq!(stats.min_rtt, Duration::from_micros(100));
+
+        // Test with very high RTT (1 second)
+        stats.record_response(Duration::from_secs(1));
+        assert_eq!(stats.max_rtt, Duration::from_secs(1));
+
+        // Average should be reasonable
+        let avg_micros = stats.avg_rtt().as_micros();
+        // (100 + 1_000_000) / 2 = 500_050
+        assert!(avg_micros > 400_000 && avg_micros < 600_000);
+    }
+
+    #[test]
+    fn test_hop_recent_results_tracking() {
+        let mut hop = Hop::new(3);
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
+
+        // Send some probes with mixed results
+        hop.record_sent();
+        hop.record_response(ip, Duration::from_millis(10));
+        assert_eq!(hop.recent_results.back(), Some(&true));
+
+        hop.record_sent();
+        hop.record_timeout();
+        assert_eq!(hop.recent_results.back(), Some(&false));
+
+        hop.record_sent();
+        hop.record_response(ip, Duration::from_millis(10));
+        assert_eq!(hop.recent_results.back(), Some(&true));
+
+        // Check ordering: [true, false, true]
+        let results: Vec<bool> = hop.recent_results.iter().copied().collect();
+        assert_eq!(results, vec![true, false, true]);
+    }
+
+    #[test]
+    fn test_responder_stats_rolling_window_capacity() {
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+        let mut stats = ResponderStats::new(ip);
+
+        // Add 70 samples (more than 60 capacity)
+        for i in 0..70 {
+            stats.record_response(Duration::from_millis(i));
+        }
+
+        // Rolling window should be capped at 60
+        assert_eq!(stats.recent.len(), 60);
+
+        // Oldest entries should be dropped (first 10)
+        // Most recent should be 60-69ms
+        let first_entry = stats.recent.front().unwrap().unwrap();
+        assert!(first_entry >= Duration::from_millis(10));
     }
 }

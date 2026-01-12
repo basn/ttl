@@ -85,7 +85,11 @@ pub fn create_recv_socket(ipv6: bool) -> Result<Socket> {
     let socket = create_raw_icmp_socket(ipv6)?;
 
     // Increase receive buffer size for high probe rates
-    socket.set_recv_buffer_size(1024 * 1024)?; // 1MB
+    // This may fail if the requested size exceeds net.core.rmem_max
+    if let Err(e) = socket.set_recv_buffer_size(1024 * 1024) {
+        eprintln!("Warning: Could not set receive buffer to 1MB: {}", e);
+        // Continue with default buffer size
+    }
 
     Ok(socket)
 }

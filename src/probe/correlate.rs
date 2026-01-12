@@ -175,12 +175,9 @@ fn skip_ipv6_extension_headers(data: &[u8]) -> Option<usize> {
                 }
             }
             IPV6_NH_FRAGMENT => {
-                // Fragment header is fixed 8 bytes
-                if data.len() < offset + 8 {
-                    return None;
-                }
-                next_header = data[offset];
-                offset += 8;
+                // Fragment headers indicate fragmented packets
+                // We can't reassemble fragments, so reject them
+                return None;
             }
             IPV6_NH_NO_NEXT => {
                 // No upper layer payload
@@ -564,5 +561,250 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.probe_id.ttl, 7);
         assert_eq!(parsed.probe_id.seq, 2);
+    }
+
+    #[test]
+    fn test_parse_echo_reply_v6() {
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let our_id = 0x1234;
+
+        // Build IPv6 + ICMPv6 Echo Reply packet
+        // IPv6 header (40 bytes) + ICMPv6 Echo Reply (8 bytes minimum)
+        let mut packet = vec![0u8; 48];
+
+        // IPv6 header
+        packet[0] = 0x60; // Version 6
+        packet[6] = 58;   // Next Header: ICMPv6
+
+        // ICMPv6 Echo Reply at offset 40
+        packet[40] = 129; // Type: Echo Reply
+        packet[41] = 0;   // Code: 0
+        // Checksum (skipped for ICMPv6 - kernel validates)
+        // Identifier
+        packet[44] = 0x12;
+        packet[45] = 0x34;
+        // Sequence (TTL=8, seq=4)
+        let probe_id = ProbeId::new(8, 4);
+        let seq = probe_id.to_sequence();
+        packet[46] = (seq >> 8) as u8;
+        packet[47] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.responder, responder);
+        assert_eq!(parsed.probe_id.ttl, 8);
+        assert_eq!(parsed.probe_id.seq, 4);
+        assert_eq!(parsed.response_type, IcmpResponseType::EchoReply);
+    }
+
+    #[test]
+    fn test_parse_time_exceeded_v6() {
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        let our_id = 0xABCD;
+
+        // Build IPv6 + ICMPv6 Time Exceeded packet
+        // Outer IPv6 (40) + ICMPv6 header (8) + Original IPv6 (40) + Original ICMPv6 (8) = 96 bytes
+        let mut packet = vec![0u8; 96];
+
+        // Outer IPv6 header
+        packet[0] = 0x60;
+        packet[6] = 58; // ICMPv6
+
+        // ICMPv6 Time Exceeded at offset 40
+        packet[40] = 3;   // Type: Time Exceeded
+        packet[41] = 0;   // Code: Hop limit exceeded
+
+        // Original IPv6 header (inside ICMPv6 payload at offset 48)
+        packet[48] = 0x60; // Version 6
+        packet[54] = 58;   // Next Header: ICMPv6
+
+        // Original ICMPv6 Echo Request (at offset 88)
+        packet[88] = 128;  // Type: Echo Request
+        packet[89] = 0;    // Code: 0
+        // Identifier
+        packet[92] = 0xAB;
+        packet[93] = 0xCD;
+        // Sequence (TTL=6, seq=2)
+        let probe_id = ProbeId::new(6, 2);
+        let seq = probe_id.to_sequence();
+        packet[94] = (seq >> 8) as u8;
+        packet[95] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 6);
+        assert_eq!(parsed.probe_id.seq, 2);
+        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded);
+    }
+
+    #[test]
+    fn test_ipv6_with_hop_by_hop_extension() {
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let our_id = 0x1234;
+
+        // Build IPv6 + Hop-by-Hop Options (8 bytes) + ICMPv6 Echo Reply
+        // IPv6 header (40 bytes) + Hop-by-Hop (8 bytes) + ICMPv6 (8 bytes) = 56 bytes
+        let mut packet = vec![0u8; 56];
+
+        // IPv6 header
+        packet[0] = 0x60; // Version 6
+        packet[6] = 0;    // Next Header: Hop-by-Hop Options
+
+        // Hop-by-Hop Options header at offset 40
+        packet[40] = 58;  // Next Header: ICMPv6
+        packet[41] = 0;   // Length: 0 (means 8 bytes total)
+        // Padding bytes 42-47
+
+        // ICMPv6 Echo Reply at offset 48
+        packet[48] = 129; // Type: Echo Reply
+        packet[49] = 0;   // Code: 0
+        // Identifier
+        packet[52] = 0x12;
+        packet[53] = 0x34;
+        // Sequence (TTL=5, seq=1)
+        let probe_id = ProbeId::new(5, 1);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 5);
+        assert_eq!(parsed.probe_id.seq, 1);
+    }
+
+    #[test]
+    fn test_ipv6_with_routing_extension() {
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let our_id = 0x5678;
+
+        // Build IPv6 + Routing Header (8 bytes) + ICMPv6 Echo Reply
+        let mut packet = vec![0u8; 56];
+
+        // IPv6 header
+        packet[0] = 0x60;
+        packet[6] = 43;   // Next Header: Routing
+
+        // Routing header at offset 40
+        packet[40] = 58;  // Next Header: ICMPv6
+        packet[41] = 0;   // Length: 0 (8 bytes total)
+        packet[42] = 0;   // Routing Type
+        packet[43] = 0;   // Segments Left
+
+        // ICMPv6 Echo Reply at offset 48
+        packet[48] = 129;
+        packet[49] = 0;
+        packet[52] = 0x56;
+        packet[53] = 0x78;
+        let probe_id = ProbeId::new(3, 7);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 3);
+        assert_eq!(parsed.probe_id.seq, 7);
+    }
+
+    #[test]
+    fn test_ipv6_fragment_header_rejected() {
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let our_id = 0x1234;
+
+        // Build IPv6 with Fragment header - should be rejected
+        let mut packet = vec![0u8; 56];
+
+        // IPv6 header
+        packet[0] = 0x60;
+        packet[6] = 44;   // Next Header: Fragment
+
+        // Fragment header at offset 40
+        packet[40] = 58;  // Next Header: ICMPv6
+        // Fragment header is 8 bytes
+
+        // ICMPv6 at offset 48
+        packet[48] = 129; // Echo Reply
+        packet[52] = 0x12;
+        packet[53] = 0x34;
+
+        // Fragments are rejected (we don't handle reassembly)
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_invalid_icmp_checksum_rejected() {
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
+        let our_id = 0x1234;
+
+        // Build Echo Reply with invalid checksum
+        let mut packet = vec![0u8; 28];
+
+        // IPv4 header
+        packet[0] = 0x45;
+        packet[9] = 1; // ICMP
+
+        // ICMP Echo Reply with bad checksum
+        packet[20] = 0;   // Type: Echo Reply
+        packet[21] = 0;   // Code: 0
+        packet[22] = 0xFF; // Invalid checksum
+        packet[23] = 0xFF;
+        packet[24] = 0x12;
+        packet[25] = 0x34;
+        let probe_id = ProbeId::new(1, 1);
+        let seq = probe_id.to_sequence();
+        packet[26] = (seq >> 8) as u8;
+        packet[27] = (seq & 0xFF) as u8;
+
+        // Should be rejected due to invalid checksum
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dest_unreachable_v4() {
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
+        let our_id = 0xDEAD;
+
+        // Build Destination Unreachable packet (similar structure to Time Exceeded)
+        let mut packet = vec![0u8; 56];
+
+        // Outer IPv4 header
+        packet[0] = 0x45;
+        packet[9] = 1;
+
+        // ICMP Destination Unreachable
+        packet[20] = 3;   // Type: Destination Unreachable
+        packet[21] = 1;   // Code: Host Unreachable
+
+        // Original IP header at offset 28
+        packet[28] = 0x45;
+        packet[37] = 1;
+
+        // Original ICMP at offset 48
+        packet[48] = 8;   // Echo Request
+        packet[52] = 0xDE;
+        packet[53] = 0xAD;
+        let probe_id = ProbeId::new(12, 3);
+        let seq = probe_id.to_sequence();
+        packet[54] = (seq >> 8) as u8;
+        packet[55] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 12);
+        assert_eq!(parsed.probe_id.seq, 3);
+        assert!(matches!(parsed.response_type, IcmpResponseType::DestUnreachable(1)));
     }
 }

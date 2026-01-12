@@ -79,12 +79,17 @@ impl ProbeEngine {
                         }
                     }
 
-                    // Send probes for all TTLs
-                    for ttl in 1..=self.config.max_ttl {
-                        // Check if we've reached the destination for this TTL
+                    // Determine max TTL to probe (stop at destination if known)
+                    let max_probe_ttl = {
+                        let state = self.state.read();
+                        state.dest_ttl.unwrap_or(self.config.max_ttl)
+                    };
+
+                    // Send probes for TTLs up to the destination
+                    for ttl in 1..=max_probe_ttl {
                         let should_probe = {
                             let state = self.state.read();
-                            // Always probe if we haven't completed, or if TTL is at or below last responding hop
+                            // Probe if we haven't completed, or if this TTL has responded before
                             !state.complete || state.hop(ttl).is_some_and(|h| h.received > 0)
                         };
 
