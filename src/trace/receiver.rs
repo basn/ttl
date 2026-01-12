@@ -50,10 +50,66 @@ impl Receiver {
                 break;
             }
 
-            let now = Instant::now();
+            // FIRST: Drain all pending packets from socket before timeout cleanup
+            // This prevents dropping responses that are already queued in the buffer
+            loop {
+                match recv_icmp(&socket, &mut buffer) {
+                    Ok((len, responder)) => {
+                        if let Some(parsed) =
+                            parse_icmp_response(&buffer[..len], responder, identifier)
+                        {
+                            // Find matching pending probe in shared map
+                            let probe = self.pending.write().remove(&parsed.probe_id);
+                            if let Some(probe) = probe {
+                                let rtt = Instant::now().duration_since(probe.sent_at);
 
-            // Clean up timed out probes from shared pending map
+                                // Update state
+                                let mut state = self.state.write();
+                                if let Some(hop) = state.hop_mut(parsed.probe_id.ttl) {
+                                    hop.record_response(parsed.responder, rtt);
+                                }
+
+                                // Check if we reached the destination
+                                if matches!(parsed.response_type, IcmpResponseType::EchoReply) {
+                                    if parsed.responder == probe.target {
+                                        state.complete = true;
+                                        // Track the lowest TTL that reached the destination
+                                        let ttl = parsed.probe_id.ttl;
+                                        if state.dest_ttl.is_none() || ttl < state.dest_ttl.unwrap()
+                                        {
+                                            state.dest_ttl = Some(ttl);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Late packet arrival - response came after timeout
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Late response: TTL {} seq {} from {} (already timed out)",
+                                    parsed.probe_id.ttl, parsed.probe_id.seq, parsed.responder
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // WouldBlock/TimedOut means socket is drained, exit inner loop
+                        let is_timeout = e.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                            io.kind() == std::io::ErrorKind::WouldBlock
+                                || io.kind() == std::io::ErrorKind::TimedOut
+                        });
+
+                        if !is_timeout {
+                            eprintln!("Receive error: {}", e);
+                        }
+                        break; // Exit inner loop, proceed to timeout cleanup
+                    }
+                }
+            }
+
+            // THEN: Clean up timed out probes from shared pending map
+            // This runs after draining the socket, so queued responses aren't lost
             {
+                let now = Instant::now();
                 let mut pending = self.pending.write();
                 let timeout = self.timeout;
                 pending.retain(|id, probe| {
@@ -68,59 +124,6 @@ impl Receiver {
                         true
                     }
                 });
-            }
-
-            // Try to receive a packet
-            match recv_icmp(&socket, &mut buffer) {
-                Ok((len, responder)) => {
-                    if let Some(parsed) = parse_icmp_response(&buffer[..len], responder, identifier)
-                    {
-                        // Find matching pending probe in shared map
-                        let probe = self.pending.write().remove(&parsed.probe_id);
-                        if let Some(probe) = probe {
-                            let rtt = Instant::now().duration_since(probe.sent_at);
-
-                            // Update state
-                            let mut state = self.state.write();
-                            if let Some(hop) = state.hop_mut(parsed.probe_id.ttl) {
-                                hop.record_response(parsed.responder, rtt);
-                            }
-
-                            // Check if we reached the destination
-                            if matches!(parsed.response_type, IcmpResponseType::EchoReply) {
-                                if parsed.responder == probe.target {
-                                    state.complete = true;
-                                    // Track the lowest TTL that reached the destination
-                                    let ttl = parsed.probe_id.ttl;
-                                    if state.dest_ttl.is_none() || ttl < state.dest_ttl.unwrap() {
-                                        state.dest_ttl = Some(ttl);
-                                    }
-                                }
-                            }
-                        } else {
-                            // Late packet arrival - response came after timeout
-                            // This is common with high-latency or congested paths
-                            #[cfg(debug_assertions)]
-                            eprintln!(
-                                "Late response: TTL {} seq {} from {} (already timed out)",
-                                parsed.probe_id.ttl,
-                                parsed.probe_id.seq,
-                                parsed.responder
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    // Timeout is expected, other errors log
-                    let is_timeout = e
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|io| io.kind() == std::io::ErrorKind::WouldBlock
-                            || io.kind() == std::io::ErrorKind::TimedOut);
-
-                    if !is_timeout {
-                        eprintln!("Receive error: {}", e);
-                    }
-                }
             }
         }
 
