@@ -108,6 +108,14 @@ impl ProbeEngine {
 
                         let sent_at = Instant::now();
 
+                        // Notify receiver FIRST to ensure probe is registered before response arrives
+                        // This prevents a race where fast responses arrive before the pending map entry
+                        let _ = self.probe_tx.send(ProbeSent {
+                            id: probe_id,
+                            sent_at,
+                            target: self.target,
+                        }).await;
+
                         if let Err(e) = send_icmp(&socket, &packet, self.target) {
                             eprintln!("Failed to send probe TTL {}: {}", ttl, e);
                             continue;
@@ -121,13 +129,6 @@ impl ProbeEngine {
                             }
                             state.total_sent += 1;
                         }
-
-                        // Notify receiver about sent probe for correlation
-                        let _ = self.probe_tx.send(ProbeSent {
-                            id: probe_id,
-                            sent_at,
-                            target: self.target,
-                        }).await;
 
                         total_sent += 1;
                     }
