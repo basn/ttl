@@ -93,6 +93,29 @@ impl Widget for HopDetailView<'_> {
                 ]));
             }
 
+            // IX (if available - PeeringDB)
+            if let Some(ref ix) = stats.ix {
+                let ix_location = [
+                    ix.city.as_deref(),
+                    ix.country.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(", ");
+
+                let ix_str = if ix_location.is_empty() {
+                    ix.name.clone()
+                } else {
+                    format!("{} ({})", ix.name, ix_location)
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled("  IX:        ", Style::default().fg(self.theme.text_dim)),
+                    Span::styled(ix_str, Style::default().fg(self.theme.shortcut)),
+                ]));
+            }
+
             lines.push(Line::from(""));
 
             // Sparkline visualization

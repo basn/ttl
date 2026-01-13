@@ -22,7 +22,7 @@ mod tui;
 use cli::Args;
 use config::Config;
 use export::{export_csv, export_json, generate_report};
-use lookup::{run_asn_worker, run_dns_worker, run_geo_worker, AsnLookup, DnsLookup, GeoLookup};
+use lookup::{run_asn_worker, run_dns_worker, run_geo_worker, run_ix_worker, AsnLookup, DnsLookup, GeoLookup, IxLookup};
 use prefs::Prefs;
 use probe::{check_permissions, validate_interface, InterfaceInfo};
 use state::{Session, Target};
@@ -344,6 +344,19 @@ async fn run_interactive_mode(
         None
     };
 
+    // Spawn IX worker (if enabled)
+    let ix_handle = if config.ix_enabled {
+        match IxLookup::new() {
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize IX lookup: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Load saved preferences
     let prefs = Prefs::load();
 
@@ -383,6 +396,9 @@ async fn run_interactive_mode(
         handle.await?;
     }
     if let Some(handle) = geo_handle {
+        handle.await?;
+    }
+    if let Some(handle) = ix_handle {
         handle.await?;
     }
 
@@ -475,6 +491,19 @@ async fn run_batch_mode(
         None
     };
 
+    // Spawn IX worker (if enabled)
+    let ix_handle = if config.ix_enabled {
+        match IxLookup::new() {
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize IX lookup: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Wait for all engines to complete
     for handle in engine_handles {
         handle.await??;
@@ -499,6 +528,9 @@ async fn run_batch_mode(
         handle.await?;
     }
     if let Some(handle) = geo_handle {
+        handle.await?;
+    }
+    if let Some(handle) = ix_handle {
         handle.await?;
     }
 
@@ -609,6 +641,19 @@ async fn run_streaming_mode(
         None
     };
 
+    // Spawn IX worker (if enabled)
+    let ix_handle = if config.ix_enabled {
+        match IxLookup::new() {
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize IX lookup: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Print results as they come in
     let mut last_total_received: HashMap<IpAddr, u64> = HashMap::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
@@ -673,6 +718,9 @@ async fn run_streaming_mode(
         handle.await?;
     }
     if let Some(handle) = geo_handle {
+        handle.await?;
+    }
+    if let Some(handle) = ix_handle {
         handle.await?;
     }
 

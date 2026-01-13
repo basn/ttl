@@ -44,6 +44,8 @@ pub struct Config {
     pub asn_enabled: bool,
     /// Enable geolocation
     pub geo_enabled: bool,
+    /// Enable IX detection (PeeringDB)
+    pub ix_enabled: bool,
     /// Network interface to bind sockets to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interface: Option<String>,
@@ -70,6 +72,7 @@ impl Default for Config {
             dns_enabled: true,
             asn_enabled: true,
             geo_enabled: true,
+            ix_enabled: true,
             interface: None,
             recv_any: false,
         }
@@ -105,6 +108,7 @@ impl From<&Args> for Config {
             dns_enabled: !args.no_dns,
             asn_enabled: !args.no_asn,
             geo_enabled: !args.no_geo,
+            ix_enabled: !args.no_ix,
             interface: args.interface.clone(),
             recv_any: args.recv_any,
         }

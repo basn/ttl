@@ -66,6 +66,10 @@ pub struct Args {
     #[arg(long = "no-geo")]
     pub no_geo: bool,
 
+    /// Skip IX detection (PeeringDB)
+    #[arg(long = "no-ix")]
+    pub no_ix: bool,
+
     /// Path to MaxMind GeoLite2 database file
     #[arg(long = "geoip-db")]
     pub geoip_db: Option<String>,

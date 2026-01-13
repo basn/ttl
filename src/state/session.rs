@@ -96,6 +96,17 @@ pub struct GeoInfo {
     pub longitude: Option<f64>,
 }
 
+/// Internet Exchange information (from PeeringDB)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IxInfo {
+    /// IX name (e.g., "DE-CIX Frankfurt", "Equinix Ashburn")
+    pub name: String,
+    /// City where the IX is located
+    pub city: Option<String>,
+    /// Country code
+    pub country: Option<String>,
+}
+
 /// Stats for a single responder at a given TTL
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponderStats {
@@ -103,6 +114,8 @@ pub struct ResponderStats {
     pub hostname: Option<String>,
     pub asn: Option<AsnInfo>,
     pub geo: Option<GeoInfo>,
+    /// Internet Exchange info (from PeeringDB)
+    pub ix: Option<IxInfo>,
 
     /// MPLS labels from ICMP extensions (RFC 4950)
     pub mpls_labels: Option<Vec<MplsLabel>>,
@@ -142,6 +155,7 @@ impl ResponderStats {
             hostname: None,
             asn: None,
             geo: None,
+            ix: None,
             mpls_labels: None,
             sent: 0,
             received: 0,

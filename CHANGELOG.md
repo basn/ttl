@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-01-13
+
+### Added
+- **IX detection via PeeringDB**: Identify Internet Exchange points in the path
+  - Fetches IX peering LAN prefixes from PeeringDB API
+  - Matches hop IPs against IX prefixes (IPv4 and IPv6)
+  - Shows IX name, city, and country in hop detail view
+  - Data cached locally for 24 hours to respect API rate limits
+  - Cache stored in `~/.cache/ttl/peeringdb/ix_cache.json`
+  - Disable with `--no-ix` flag
+
+### Technical
+- New `src/lookup/ix.rs` module for PeeringDB integration
+- `IxInfo` struct added to `ResponderStats` for IX data
+- `IxLookup` handles API fetching, caching, and prefix matching
+- Background `run_ix_worker` updates session state like ASN/GeoIP workers
+- Added `reqwest` dependency for HTTP requests
+
 ## [0.7.0] - 2026-01-13
 
 ### Added

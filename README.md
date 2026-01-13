@@ -13,6 +13,7 @@ Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment.
 - MPLS label detection from ICMP extensions
 - ASN lookup via Team Cymru DNS (enabled by default)
 - GeoIP lookup via MaxMind GeoLite2 database
+- **IX detection via PeeringDB**: Identify Internet Exchange points in path
 - ICMP, UDP, and TCP probing modes with auto-detection
 - **Paris/Dublin traceroute**: Multi-flow probing for ECMP path enumeration
 - **NAT detection**: Identify when NAT devices rewrite source ports
@@ -182,6 +183,7 @@ The `--recv-any` flag (requires `--interface`) disables receiver socket binding.
 --no-dns             Skip reverse DNS lookups
 --no-asn             Skip ASN enrichment
 --no-geo             Skip geolocation
+--no-ix              Skip IX detection (PeeringDB)
 --geoip-db <PATH>    Path to MaxMind GeoLite2 database
 --no-tui             Streaming output mode
 --report             Batch report mode (requires -c)
@@ -322,6 +324,7 @@ Three jitter metrics are tracked:
 | ASN lookup | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: |
 | GeoIP | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: |
 | MPLS labels | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
+| IX detection | :white_check_mark: | :x: | :x: | :x: |
 | **ECMP** |
 | Multi-path detection | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | Paris traceroute | :white_check_mark: | :white_check_mark: | :x: | :x: |

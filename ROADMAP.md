@@ -1,6 +1,6 @@
 # ttl Roadmap
 
-## Current Status (v0.7.0)
+## Current Status (v0.9.0)
 
 ### Core Features
 - [x] ICMP Echo probing with TTL sweep
@@ -34,6 +34,7 @@
 ### Enrichment
 - [x] ASN lookup (Team Cymru DNS)
 - [x] GeoIP lookup (MaxMind GeoLite2)
+- [x] IX detection (PeeringDB)
 
 ### TUI Features
 - [x] Interactive hop selection with j/k navigation
@@ -104,11 +105,14 @@
 - [ ] Flows per second control (`--rate`)
 - [ ] First-hop gateway detection (show which interface/gateway is used)
 
-### v0.9.0 - IX & Rate Limit Detection
-- [ ] IX detection via PeeringDB (identify Internet Exchange points in path)
-- [ ] Rate limit detection (identify ICMP rate limiting, explain misleading loss%)
+### v0.9.0 - IX Detection (Released)
+- [x] IX detection via PeeringDB (identify Internet Exchange points in path)
+- [x] Local cache for PeeringDB data (24 hour TTL)
+- [x] IX info shown in hop detail view
+- [x] `--no-ix` flag to disable
 
 ### v0.10.0 - Advanced Diagnostics
+- [ ] Rate limit detection (identify ICMP rate limiting, explain misleading loss%)
 - [ ] Asymmetric routing detection (compare forward path TTLs in responses)
 - [ ] Route flap/change detection (alert on path changes, log history)
 - [ ] Packet loss pattern analysis (bursty vs random loss classification)
