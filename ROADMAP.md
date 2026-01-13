@@ -1,6 +1,6 @@
 # ttl Roadmap
 
-## Current Status (v0.6.1)
+## Current Status (v0.7.0)
 
 ### Core Features
 - [x] ICMP Echo probing with TTL sweep
@@ -21,6 +21,7 @@
 - [x] Destination detection (stops at actual hop count)
 - [x] Race-free probe correlation (shared pending map)
 - [x] Terminal state cleanup on error/panic
+- [x] Interface binding (`--interface`, `--recv-any`)
 
 ### Probing Modes
 - [x] ICMP Echo (default for privileged users)
@@ -88,14 +89,14 @@
 - [ ] Comparative views
 - [ ] Split-screen mode
 
-### v0.7.0 - TUI Polish
-- [ ] Customizable columns (choose which stats to display)
-- [ ] Custom keybindings
-- [ ] World map visualization (ASCII/Unicode geographic path display)
-- [ ] Hop privacy mode (mask sensitive IPs for screenshots/sharing)
+### v0.7.0 - Interface Binding (Released)
+- [x] Source interface selection (`--interface eth0`)
+- [x] Asymmetric routing support (`--recv-any`)
+- [x] Cross-platform binding (Linux SO_BINDTODEVICE, macOS IP_BOUND_IF)
+- [x] IPv6 link-local detection and rejection
+- [x] Interface-aware auto-protocol detection
 
 ### v0.8.0 - Probe Control & MTU
-- [ ] Source interface selection (`--interface eth0`)
 - [ ] Source IP selection (`--source-ip 10.0.0.1`)
 - [ ] Packet size control (`--size 1400`)
 - [ ] Path MTU discovery mode (binary search for max unfragmented size)
@@ -103,8 +104,11 @@
 - [ ] Flows per second control (`--rate`)
 - [ ] First-hop gateway detection (show which interface/gateway is used)
 
-### v0.9.0 - Advanced Diagnostics
+### v0.9.0 - IX & Rate Limit Detection
+- [ ] IX detection via PeeringDB (identify Internet Exchange points in path)
 - [ ] Rate limit detection (identify ICMP rate limiting, explain misleading loss%)
+
+### v0.10.0 - Advanced Diagnostics
 - [ ] Asymmetric routing detection (compare forward path TTLs in responses)
 - [ ] Route flap/change detection (alert on path changes, log history)
 - [ ] Packet loss pattern analysis (bursty vs random loss classification)
@@ -115,7 +119,6 @@
 ### v1.0.0 - BGP & Routing Integration
 - [ ] Looking glass integration (query public route servers)
 - [ ] BGP community display (show communities on path if available)
-- [ ] IX detection (identify Internet Exchange points in path)
 - [ ] RPKI/ROA validation (prefix origin validation for each hop)
 - [ ] AS path display (full BGP AS path where available)
 
@@ -132,6 +135,18 @@
 - [ ] ECN testing (Explicit Congestion Notification support)
 - [ ] Fragmentation testing (test behavior at different packet sizes)
 - [ ] Multi-path validation (verify all ECMP paths are functional)
+
+### TUI Polish (Deferred)
+- [ ] Customizable columns (choose which stats to display)
+- [ ] Custom keybindings
+- [ ] World map visualization (ASCII/Unicode geographic path display)
+- [ ] Hop privacy mode (mask sensitive IPs for screenshots/sharing)
+
+### Infrastructure
+- [ ] GitHub Actions CI (build, test, clippy)
+- [ ] Binary releases (Linux, macOS)
+- [ ] Homebrew formula
+- [ ] AUR package
 
 ### Future Ideas
 - [ ] Bidirectional probing (with remote agent, measure both directions)
