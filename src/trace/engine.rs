@@ -12,9 +12,9 @@ use crate::probe::{
     create_send_socket_with_interface, create_tcp_socket_with_interface, create_udp_dgram_socket,
     create_udp_dgram_socket_bound_full, create_udp_dgram_socket_bound_with_interface,
     get_identifier, get_local_addr_with_interface, send_icmp, send_tcp_probe, send_udp_probe,
-    set_dscp, set_ttl,
+    set_dont_fragment, set_dscp, set_ttl,
 };
-use crate::state::{ProbeId, Session};
+use crate::state::{PmtudPhase, ProbeId, Session};
 use crate::trace::pending::{PendingMap, PendingProbe};
 
 /// The probe engine sends ICMP probes at configured intervals
@@ -126,6 +126,8 @@ impl ProbeEngine {
         }
 
         let mut seq: u8 = 0;
+        // PMTUD uses separate seq counter; collision prevented by is_pmtud flag in pending key
+        let mut pmtud_seq: u8 = 0;
         let mut total_sent: u64 = 0;
         let mut interval = tokio::time::interval(self.config.interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -201,17 +203,18 @@ impl ProbeEngine {
                         let flow_id = 0u8;
                         {
                             let mut pending = self.pending.write();
-                            pending.insert((probe_id, flow_id, self.target), PendingProbe {
+                            pending.insert((probe_id, flow_id, self.target, false), PendingProbe {
                                 sent_at,
                                 target: self.target,
                                 flow_id,
                                 original_src_port: None, // ICMP has no source port
+                                packet_size: None,
                             });
                         }
 
                         if let Err(e) = send_icmp(&socket, &packet, self.target) {
                             // Remove pending entry on send failure to avoid false timeouts
-                            self.pending.write().remove(&(probe_id, flow_id, self.target));
+                            self.pending.write().remove(&(probe_id, flow_id, self.target, false));
                             eprintln!("Failed to send probe TTL {}: {}", ttl, e);
                             continue;
                         }
@@ -229,6 +232,17 @@ impl ProbeEngine {
                         total_sent += 1;
 
                         // Apply rate limiting if configured
+                        self.apply_rate_limit().await;
+                    }
+
+                    // PMTUD: Send additional probe at destination TTL with current test size
+                    // Uses separate pmtud_seq counter to avoid ProbeId collision with normal probes
+                    if let Some(dest_ttl) = self.check_pmtud_ready()
+                        && let Some(probe_size) = self.get_pmtud_probe_size()
+                        && self.send_pmtud_probe_icmp(&socket, dest_ttl, probe_size, pmtud_seq).await
+                    {
+                        pmtud_seq = pmtud_seq.wrapping_add(1);
+                        total_sent += 1;
                         self.apply_rate_limit().await;
                     }
 
@@ -348,16 +362,17 @@ impl ProbeEngine {
                             // Register pending BEFORE sending (key includes flow_id and target for multi-flow/multi-target)
                             {
                                 let mut pending = self.pending.write();
-                                pending.insert((probe_id, flow_id, self.target), PendingProbe {
+                                pending.insert((probe_id, flow_id, self.target, false), PendingProbe {
                                     sent_at,
                                     target: self.target,
                                     flow_id,
                                     original_src_port: Some(src_port), // For NAT detection
+                                    packet_size: None,
                                 });
                             }
 
                             if let Err(e) = send_udp_probe(socket, &payload, self.target, dst_port) {
-                                self.pending.write().remove(&(probe_id, flow_id, self.target));
+                                self.pending.write().remove(&(probe_id, flow_id, self.target, false));
                                 eprintln!("Failed to send UDP probe TTL {} flow {}: {}", ttl, flow_id, e);
                                 continue;
                             }
@@ -493,16 +508,17 @@ impl ProbeEngine {
                             // Register pending BEFORE sending (key includes flow_id and target for multi-flow/multi-target)
                             {
                                 let mut pending = self.pending.write();
-                                pending.insert((probe_id, flow_id, self.target), PendingProbe {
+                                pending.insert((probe_id, flow_id, self.target, false), PendingProbe {
                                     sent_at,
                                     target: self.target,
                                     flow_id,
                                     original_src_port: Some(src_port), // For NAT detection
+                                    packet_size: None,
                                 });
                             }
 
                             if let Err(e) = send_tcp_probe(&socket, &packet, self.target, dst_port) {
-                                self.pending.write().remove(&(probe_id, flow_id, self.target));
+                                self.pending.write().remove(&(probe_id, flow_id, self.target, false));
                                 eprintln!("Failed to send TCP probe TTL {} flow {}: {}", ttl, flow_id, e);
                                 continue;
                             }
@@ -530,6 +546,151 @@ impl ProbeEngine {
         }
 
         Ok(())
+    }
+
+    // =========================================================================
+    // PMTUD (Path MTU Discovery) support
+    // =========================================================================
+
+    /// Check if PMTUD is enabled and ready to start searching
+    /// Returns (should_do_pmtud, dest_ttl) if PMTUD probes should be sent this tick
+    fn check_pmtud_ready(&self) -> Option<u8> {
+        if !self.config.pmtud {
+            return None;
+        }
+
+        let mut state = self.state.write();
+        let dest_ttl = state.dest_ttl?;
+
+        // Check and potentially transition PMTUD state
+        if let Some(ref mut pmtud) = state.pmtud {
+            match pmtud.phase {
+                PmtudPhase::WaitingForDestination => {
+                    // Destination found - start PMTUD search
+                    pmtud.start_search();
+                    Some(dest_ttl)
+                }
+                PmtudPhase::Searching => Some(dest_ttl),
+                PmtudPhase::Complete => None, // Already done
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get current PMTUD probe size (if searching)
+    fn get_pmtud_probe_size(&self) -> Option<u16> {
+        let state = self.state.read();
+        state.pmtud.as_ref().and_then(|p| {
+            if p.phase == PmtudPhase::Searching {
+                Some(p.current_size)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Send an ICMP PMTUD probe at the specified TTL with the given packet size
+    /// Returns true if probe was sent successfully
+    async fn send_pmtud_probe_icmp(
+        &self,
+        socket: &socket2::Socket,
+        dest_ttl: u8,
+        packet_size: u16,
+        seq: u8,
+    ) -> bool {
+        let probe_id = ProbeId::new(dest_ttl, seq);
+
+        // Calculate payload size from total packet size
+        // packet_size includes IP + ICMP headers
+        let ip_header_size: usize = if self.target.is_ipv6() { 40 } else { 20 };
+        let payload_size = (packet_size as usize).saturating_sub(ip_header_size + ICMP_HEADER_SIZE);
+
+        let packet = build_echo_request(self.identifier, probe_id.to_sequence(), payload_size);
+
+        // Set TTL
+        if let Err(e) = set_ttl(socket, dest_ttl) {
+            eprintln!("PMTUD: Failed to set TTL {}: {}", dest_ttl, e);
+            return false;
+        }
+
+        // Set Don't Fragment flag (critical for PMTUD)
+        if let Err(e) = set_dont_fragment(socket, self.target.is_ipv6()) {
+            eprintln!("PMTUD: Failed to set DF flag: {}", e);
+            return false;
+        }
+
+        // Set DSCP if configured
+        if let Some(dscp) = self.config.dscp
+            && let Err(e) = set_dscp(socket, dscp, self.target.is_ipv6())
+        {
+            eprintln!("PMTUD: Failed to set DSCP: {}", e);
+        }
+
+        let sent_at = Instant::now();
+        let flow_id = 0u8;
+
+        // Register pending probe with packet_size for correlation
+        // Use is_pmtud=true to distinguish from normal probes with same ProbeId
+        {
+            let mut pending = self.pending.write();
+            pending.insert(
+                (probe_id, flow_id, self.target, true),
+                PendingProbe {
+                    sent_at,
+                    target: self.target,
+                    flow_id,
+                    original_src_port: None,
+                    packet_size: Some(packet_size),
+                },
+            );
+        }
+
+        // Send the probe
+        match send_icmp(socket, &packet, self.target) {
+            Ok(_) => {
+                // Record probe sent
+                let mut state = self.state.write();
+                if let Some(hop) = state.hop_mut(dest_ttl) {
+                    hop.record_sent();
+                }
+                state.total_sent += 1;
+                true
+            }
+            Err(e) => {
+                // Remove pending entry
+                self.pending
+                    .write()
+                    .remove(&(probe_id, flow_id, self.target, true));
+
+                // Check for EMSGSIZE - packet too large for local interface
+                if let Some(io_err) = e.downcast_ref::<std::io::Error>()
+                    && io_err.raw_os_error() == Some(libc::EMSGSIZE)
+                {
+                    // Clamp PMTUD max to current size - 1
+                    let mut state = self.state.write();
+                    if let Some(ref mut pmtud) = state.pmtud {
+                        pmtud.max_size = packet_size.saturating_sub(1);
+                        pmtud.successes = 0;
+                        pmtud.failures = 0;
+                        // Recalculate current size
+                        if pmtud.is_converged() {
+                            pmtud.discovered_mtu = Some(pmtud.min_size);
+                            pmtud.phase = PmtudPhase::Complete;
+                        } else {
+                            pmtud.current_size = pmtud.next_probe_size();
+                        }
+                    }
+                    return false;
+                }
+
+                eprintln!(
+                    "PMTUD: Failed to send probe size {}: {}",
+                    packet_size, e
+                );
+                false
+            }
+        }
     }
 }
 

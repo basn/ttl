@@ -599,23 +599,46 @@ async fn run_batch_mode(
 
     // Output results for all targets
     let sessions_read = sessions.read();
-    for (i, target_ip) in targets.iter().enumerate() {
-        if let Some(state) = sessions_read.get(target_ip) {
-            let session = state.read();
-            if targets.len() > 1 && !args.json {
-                println!(
-                    "\n=== Target {}/{}: {} ===\n",
-                    i + 1,
-                    targets.len(),
-                    target_ip
-                );
+
+    // Handle JSON output separately for proper array formatting
+    if args.json {
+        if targets.len() > 1 {
+            // Multi-target: output as JSON array
+            print!("[");
+            let mut first = true;
+            for target_ip in targets.iter() {
+                if let Some(state) = sessions_read.get(target_ip) {
+                    let session = state.read();
+                    if !first {
+                        print!(",");
+                    }
+                    first = false;
+                    serde_json::to_writer(std::io::stdout(), &*session)?;
+                }
             }
-            if args.json {
-                export_json(&session, std::io::stdout())?;
-            } else if args.report {
-                generate_report(&session, std::io::stdout())?;
-            } else if args.csv {
-                export_csv(&session, std::io::stdout())?;
+            println!("]");
+        } else if let Some(state) = sessions_read.get(&targets[0]) {
+            // Single target: output as-is (backwards compatible)
+            export_json(&state.read(), std::io::stdout())?;
+        }
+    } else {
+        // Non-JSON output
+        for (i, target_ip) in targets.iter().enumerate() {
+            if let Some(state) = sessions_read.get(target_ip) {
+                let session = state.read();
+                if targets.len() > 1 {
+                    println!(
+                        "\n=== Target {}/{}: {} ===\n",
+                        i + 1,
+                        targets.len(),
+                        target_ip
+                    );
+                }
+                if args.report {
+                    generate_report(&session, std::io::stdout())?;
+                } else if args.csv {
+                    export_csv(&session, std::io::stdout())?;
+                }
             }
         }
     }

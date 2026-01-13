@@ -38,6 +38,8 @@ pub enum IcmpResponseType {
     EchoReply,
     TimeExceeded,
     DestUnreachable(u8),
+    /// ICMPv6 Type 2 - Packet Too Big (for PMTUD)
+    PacketTooBig,
 }
 
 /// MPLS label from ICMP extension (RFC 4950)
@@ -453,6 +455,132 @@ pub struct RateLimitInfo {
     pub negative_checks: u8,
 }
 
+/// PMTUD (Path MTU Discovery) phase
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PmtudPhase {
+    /// Phase 1: Normal traceroute to find destination TTL
+    #[default]
+    WaitingForDestination,
+    /// Phase 2: Binary search for MTU
+    Searching,
+    /// PMTUD complete
+    Complete,
+}
+
+/// PMTUD (Path MTU Discovery) binary search state
+///
+/// Uses binary search with DF (Don't Fragment) flag to discover the maximum
+/// packet size that can reach the destination without fragmentation.
+/// RFC 1191 (IPv4), RFC 8201 (IPv6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmtudState {
+    /// Lower bound - known to work (responses received at this size)
+    pub min_size: u16,
+    /// Upper bound - known to fail or untested
+    pub max_size: u16,
+    /// Currently testing this size
+    pub current_size: u16,
+    /// Consecutive successes at current_size (need 2 to confirm)
+    pub successes: u8,
+    /// Consecutive failures at current_size (need 2 to confirm)
+    pub failures: u8,
+    /// Final discovered MTU (set when phase == Complete)
+    pub discovered_mtu: Option<u16>,
+    /// Current phase of PMTUD
+    pub phase: PmtudPhase,
+}
+
+impl PmtudState {
+    /// Create new PMTUD state with appropriate bounds for IPv4 or IPv6
+    ///
+    /// - IPv4: min=68 (RFC 791), max=1500
+    /// - IPv6: min=1280 (RFC 8200), max=1500
+    pub fn new(ipv6: bool) -> Self {
+        let min = if ipv6 { 1280 } else { 68 };
+        Self {
+            min_size: min,
+            max_size: 1500,
+            current_size: 1500, // Start high, binary search down
+            successes: 0,
+            failures: 0,
+            discovered_mtu: None,
+            phase: PmtudPhase::WaitingForDestination,
+        }
+    }
+
+    /// Check if binary search has converged (within 8 bytes)
+    pub fn is_converged(&self) -> bool {
+        self.max_size.saturating_sub(self.min_size) < 8
+    }
+
+    /// Get the next probe size (midpoint of current range)
+    pub fn next_probe_size(&self) -> u16 {
+        (self.min_size + self.max_size) / 2
+    }
+
+    /// Record a successful probe at the current size
+    pub fn record_success(&mut self) {
+        if self.failures > 0 {
+            // Direction change (was failing, now succeeding) - restart count
+            self.failures = 0;
+            self.successes = 1;
+        } else {
+            self.successes += 1;
+            if self.successes >= 2 {
+                // Confirmed working at this size - raise lower bound
+                self.min_size = self.current_size;
+                self.successes = 0;
+                self.failures = 0;
+                self.advance();
+            }
+        }
+    }
+
+    /// Record a failed probe at the current size (timeout or Frag Needed without MTU)
+    pub fn record_failure(&mut self) {
+        if self.successes > 0 {
+            // Direction change (was succeeding, now failing) - restart count
+            self.successes = 0;
+            self.failures = 1;
+        } else {
+            self.failures += 1;
+            if self.failures >= 2 {
+                // Confirmed failing at this size - lower upper bound
+                self.max_size = self.current_size.saturating_sub(1);
+                self.successes = 0;
+                self.failures = 0;
+                self.advance();
+            }
+        }
+    }
+
+    /// Record ICMP Fragmentation Needed with reported MTU
+    /// Immediately clamps max_size to the reported MTU
+    pub fn record_frag_needed(&mut self, reported_mtu: u16) {
+        // Clamp immediately - no need for multiple confirmations
+        self.max_size = self.max_size.min(reported_mtu);
+        self.successes = 0;
+        self.failures = 0;
+        self.advance();
+    }
+
+    /// Advance to next probe size or complete if converged
+    fn advance(&mut self) {
+        if self.is_converged() {
+            self.discovered_mtu = Some(self.min_size);
+            self.phase = PmtudPhase::Complete;
+        } else {
+            self.current_size = self.next_probe_size();
+        }
+    }
+
+    /// Start the searching phase (called when destination is found)
+    pub fn start_search(&mut self) {
+        self.phase = PmtudPhase::Searching;
+        self.current_size = self.max_size; // Start at max
+    }
+}
+
 /// A single hop (TTL level) in the path
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hop {
@@ -702,6 +830,9 @@ pub struct Session {
     pub total_sent: u64,      // total probes sent across all hops
     #[serde(skip)]
     pub paused: bool, // pause probing (TUI only)
+    /// PMTUD state (only present when --pmtud is enabled)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pmtud: Option<PmtudState>,
 }
 
 impl Session {
@@ -712,6 +843,13 @@ impl Session {
             hops.push(Hop::new(ttl));
         }
 
+        // Initialize PMTUD state if enabled
+        let pmtud = if config.pmtud {
+            Some(PmtudState::new(target.resolved.is_ipv6()))
+        } else {
+            None
+        };
+
         Self {
             target,
             started_at: Utc::now(),
@@ -721,6 +859,7 @@ impl Session {
             dest_ttl: None,
             total_sent: 0,
             paused: false,
+            pmtud,
         }
     }
 
@@ -760,6 +899,11 @@ impl Session {
         self.complete = false;
         self.dest_ttl = None;
         self.started_at = Utc::now();
+
+        // Reset PMTUD state if enabled
+        if self.pmtud.is_some() {
+            self.pmtud = Some(PmtudState::new(self.target.resolved.is_ipv6()));
+        }
 
         for hop in &mut self.hops {
             hop.sent = 0;

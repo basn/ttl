@@ -59,6 +59,9 @@ pub struct Config {
     /// Probe packet size in bytes (includes IP+ICMP headers)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packet_size: Option<u16>,
+    /// Enable Path MTU discovery mode
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pmtud: bool,
     /// Maximum probes per second (None = unlimited)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<u32>,
@@ -94,6 +97,7 @@ impl Default for Config {
             recv_any: false,
             dscp: None,
             packet_size: None,
+            pmtud: false,
             rate: None,
             source_ip: None,
         }
@@ -138,6 +142,7 @@ impl From<&Args> for Config {
             recv_any: args.recv_any,
             dscp: args.dscp,
             packet_size: args.size,
+            pmtud: args.pmtud,
             rate: args.rate,
             source_ip: args.source_ip,
         }

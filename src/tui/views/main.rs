@@ -1,9 +1,9 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, Widget};
 
-use crate::state::Session;
+use crate::state::{PmtudPhase, Session};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::loss_sparkline_string;
 
@@ -82,6 +82,22 @@ impl Widget for MainView<'_> {
             .iter()
             .any(|h| h.rate_limit.as_ref().map(|r| r.suspected).unwrap_or(false));
         let rl_warn = if has_rate_limit { " [RL?]" } else { "" };
+
+        // PMTUD status indicator
+        let pmtud_status = self
+            .session
+            .pmtud
+            .as_ref()
+            .map(|p| match p.phase {
+                PmtudPhase::WaitingForDestination => String::new(),
+                PmtudPhase::Searching => format!(" [MTU: {}-{}]", p.min_size, p.max_size),
+                PmtudPhase::Complete => p
+                    .discovered_mtu
+                    .map(|mtu| format!(" [MTU: {}]", mtu))
+                    .unwrap_or_default(),
+            })
+            .unwrap_or_default();
+
         let probe_count = self.session.total_sent;
         let interval_ms = self.session.config.interval.as_millis();
 
@@ -95,7 +111,7 @@ impl Widget for MainView<'_> {
             .unwrap_or_default();
 
         let title = format!(
-            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}",
+            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}",
             target_indicator,
             target_str,
             iface_str,
@@ -103,7 +119,8 @@ impl Widget for MainView<'_> {
             interval_ms,
             status,
             nat_warn,
-            rl_warn
+            rl_warn,
+            pmtud_status
         );
 
         let block = Block::default()
@@ -297,7 +314,7 @@ impl Widget for MainView<'_> {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .highlight_style(Style::default().bg(self.theme.highlight_bg));
+            .row_highlight_style(Style::default().bg(self.theme.highlight_bg));
 
         table.render(inner, buf);
     }

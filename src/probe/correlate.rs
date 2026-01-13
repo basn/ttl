@@ -13,6 +13,7 @@ const IPPROTO_ICMPV6: u8 = 58;
 
 // ICMPv6 type codes
 const ICMPV6_ECHO_REPLY: u8 = 129;
+const ICMPV6_PACKET_TOO_BIG: u8 = 2;
 const ICMPV6_TIME_EXCEEDED: u8 = 3;
 const ICMPV6_DEST_UNREACHABLE: u8 = 1;
 
@@ -30,6 +31,9 @@ pub struct ParsedResponse {
     /// Source port from original UDP/TCP packet (for flow identification in Paris/Dublin traceroute)
     /// This allows the receiver to compute flow_id = src_port - base_src_port
     pub src_port: Option<u16>,
+    /// MTU from ICMP Fragmentation Needed (Type 3 Code 4) or ICMPv6 Packet Too Big (Type 2)
+    /// Used for Path MTU Discovery
+    pub mtu: Option<u16>,
 }
 
 // ICMP extension constants (RFC 4884, RFC 4950)
@@ -209,21 +213,31 @@ fn parse_icmp_response_v4(
                 response_type: IcmpResponseType::EchoReply,
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
+                mtu: None,
             })
         }
-        IcmpTypes::TimeExceeded => parse_icmp_error_payload_v4(
+        IcmpTypes::TimeExceeded => parse_icmp_error_payload_v4_with_mtu(
             icmp_data,
             responder,
             our_identifier,
             IcmpResponseType::TimeExceeded,
+            None,
         ),
         IcmpTypes::DestinationUnreachable => {
             let code = icmp_packet.get_icmp_code().0;
-            parse_icmp_error_payload_v4(
+            // For Fragmentation Needed (code 4), extract MTU from bytes 6-7
+            let mtu = if code == 4 && icmp_data.len() >= 8 {
+                let mtu_val = u16::from_be_bytes([icmp_data[6], icmp_data[7]]);
+                if mtu_val > 0 { Some(mtu_val) } else { None }
+            } else {
+                None
+            };
+            parse_icmp_error_payload_v4_with_mtu(
                 icmp_data,
                 responder,
                 our_identifier,
                 IcmpResponseType::DestUnreachable(code),
+                mtu,
             )
         }
         _ => None,
@@ -329,30 +343,55 @@ fn parse_icmp_response_v6(
                 response_type: IcmpResponseType::EchoReply,
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
+                mtu: None,
             })
         }
-        ICMPV6_TIME_EXCEEDED => parse_icmp_error_payload_v6(
+        ICMPV6_PACKET_TOO_BIG => {
+            // ICMPv6 Packet Too Big (Type 2) - for PMTUD
+            // MTU is in bytes 4-7 (32-bit field)
+            let mtu = if icmp_data.len() >= 8 {
+                let mtu_val = u32::from_be_bytes([icmp_data[4], icmp_data[5], icmp_data[6], icmp_data[7]]);
+                if mtu_val > 0 && mtu_val <= 65535 {
+                    Some(mtu_val as u16)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            parse_icmp_error_payload_v6_with_mtu(
+                icmp_data,
+                responder,
+                our_identifier,
+                IcmpResponseType::PacketTooBig,
+                mtu,
+            )
+        }
+        ICMPV6_TIME_EXCEEDED => parse_icmp_error_payload_v6_with_mtu(
             icmp_data,
             responder,
             our_identifier,
             IcmpResponseType::TimeExceeded,
+            None,
         ),
-        ICMPV6_DEST_UNREACHABLE => parse_icmp_error_payload_v6(
+        ICMPV6_DEST_UNREACHABLE => parse_icmp_error_payload_v6_with_mtu(
             icmp_data,
             responder,
             our_identifier,
             IcmpResponseType::DestUnreachable(icmp_code),
+            None,
         ),
         _ => None,
     }
 }
 
 /// Parse the payload of an IPv4 ICMP error message (Time Exceeded or Dest Unreachable)
-fn parse_icmp_error_payload_v4(
+fn parse_icmp_error_payload_v4_with_mtu(
     icmp_data: &[u8],
     responder: IpAddr,
     our_identifier: u16,
     response_type: IcmpResponseType,
+    mtu: Option<u16>,
 ) -> Option<ParsedResponse> {
     // ICMP error format (RFC 4884):
     // [0]    Type
@@ -415,6 +454,7 @@ fn parse_icmp_error_payload_v4(
                 response_type,
                 mpls_labels,
                 src_port: None, // ICMP has no source port
+                mtu,
             })
         }
         IPPROTO_TCP => {
@@ -437,6 +477,7 @@ fn parse_icmp_error_payload_v4(
                 response_type,
                 mpls_labels,
                 src_port: Some(src_port),
+                mtu,
             })
         }
         IPPROTO_UDP => {
@@ -460,30 +501,30 @@ fn parse_icmp_error_payload_v4(
                 response_type,
                 mpls_labels,
                 src_port: Some(src_port),
+                mtu,
             })
         }
         _ => None,
     }
 }
 
-/// Parse the payload of an IPv6 ICMPv6 error message (Time Exceeded or Dest Unreachable)
+/// Parse the payload of an IPv6 ICMPv6 error message (Time Exceeded, Dest Unreachable, or Packet Too Big)
 ///
 /// Note: Assumes the embedded original IPv6 packet has no extension headers.
 /// This is valid for our use case since we send ICMPv6 Echo Requests and UDP directly
 /// (Next Header = 58 or 17) without any extension headers.
-fn parse_icmp_error_payload_v6(
+fn parse_icmp_error_payload_v6_with_mtu(
     icmp_data: &[u8],
     responder: IpAddr,
     our_identifier: u16,
     response_type: IcmpResponseType,
+    mtu: Option<u16>,
 ) -> Option<ParsedResponse> {
     // ICMPv6 error format (RFC 4884):
     // [0]    Type
     // [1]    Code
     // [2-3]  Checksum
-    // [4]    Unused
-    // [5]    Length (original datagram length in 32-bit words, 0 = legacy)
-    // [6-7]  Unused
+    // [4-7]  Type-specific (MTU for Packet Too Big, unused for others)
     // [8..]  Original IPv6 header (40 bytes) + first 8 bytes of original payload
     // [8 + length*4..] ICMP extensions (if length > 0)
     // [136..] ICMP extensions (if length == 0, legacy mode)
@@ -533,6 +574,7 @@ fn parse_icmp_error_payload_v6(
                 response_type,
                 mpls_labels,
                 src_port: None, // ICMP has no source port
+                mtu,
             })
         }
         IPPROTO_TCP => {
@@ -555,6 +597,7 @@ fn parse_icmp_error_payload_v6(
                 response_type,
                 mpls_labels,
                 src_port: Some(src_port),
+                mtu,
             })
         }
         IPPROTO_UDP => {
@@ -578,6 +621,7 @@ fn parse_icmp_error_payload_v6(
                 response_type,
                 mpls_labels,
                 src_port: Some(src_port),
+                mtu,
             })
         }
         _ => None,

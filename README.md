@@ -24,6 +24,7 @@ Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment.
 - **ICMP rate limit detection**: Identify misleading loss from router rate limiting
 - **Interface binding**: Force probes through specific network interface
 - **Packet size control**: Set probe size for MTU testing (`--size`)
+- **Path MTU discovery**: Binary search to find maximum unfragmented size (`--pmtud`)
 - **DSCP/ToS marking**: Set QoS marking for policy testing (`--dscp`)
 - Great terminal UX built with ratatui
 - Scriptable mode for CI and automation
@@ -188,6 +189,15 @@ ttl --dscp 46 --size 1400 8.8.8.8
 
 DSCP values are set in the IP header TOS field. You can use tcpdump to verify: `sudo tcpdump -v -n icmp | grep tos`
 
+### Path MTU Discovery
+
+```bash
+# Discover the path MTU using binary search
+ttl --pmtud 8.8.8.8
+```
+
+PMTUD sends probes with the Don't Fragment (DF) flag set, binary searching between the minimum (68 bytes for IPv4, 1280 for IPv6) and maximum (1500 bytes) to find the largest packet size that passes without fragmentation. Results are shown in the TUI title bar.
+
 ### Options
 
 ```
@@ -203,6 +213,7 @@ DSCP values are set in the IP header TOS field. You can use tcpdump to verify: `
 --size <N>           Packet size in bytes (36-1500 for IPv4, 56+ for IPv6)
 --dscp <N>           DSCP value for QoS testing (0-63)
 --rate <N>           Max probes per second (0 = unlimited)
+--pmtud              Enable Path MTU Discovery (binary search for max unfragmented size)
 --source-ip <IP>     Force specific source IP address
 --interface <NAME>   Bind probes to specific network interface
 --recv-any           Don't bind receiver to interface (asymmetric routing)

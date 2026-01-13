@@ -15,8 +15,8 @@ tokio-util = "0.7"  # CancellationToken
 futures = "0.3"     # join_all for parallel DNS
 
 # TUI
-ratatui = "0.28"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -24,6 +24,7 @@ clap = { version = "4", features = ["derive"] }
 # Networking
 socket2 = { version = "0.5", features = ["all"] }
 pnet = "0.35"
+libc = "0.2"
 
 # DNS (note: trust-dns-resolver is now hickory-resolver)
 hickory-resolver = "0.24"
@@ -32,7 +33,7 @@ hickory-resolver = "0.24"
 reqwest = { version = "0.12", features = ["json"] }
 
 # ASN/Geo databases
-maxminddb = "0.24"
+maxminddb = "0.27"
 ipnetwork = "0.20"
 
 # Serialization

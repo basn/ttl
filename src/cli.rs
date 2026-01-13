@@ -112,8 +112,12 @@ pub struct Args {
 
     /// Probe packet size in bytes (36-1500 for IPv4, 56-1500 for IPv6)
     /// Includes IP + protocol headers. Smaller values are clamped to minimum.
-    #[arg(long = "size", value_parser = clap::value_parser!(u16).range(36..=1500))]
+    #[arg(long = "size", value_parser = clap::value_parser!(u16).range(36..=1500), conflicts_with = "pmtud")]
     pub size: Option<u16>,
+
+    /// Enable Path MTU discovery mode (binary search for max unfragmented size)
+    #[arg(long = "pmtud")]
+    pub pmtud: bool,
 
     /// Maximum probes per second (0 = unlimited)
     #[arg(long = "rate", value_parser = clap::value_parser!(u32).range(0..=10000))]

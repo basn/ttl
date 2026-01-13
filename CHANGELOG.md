@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.10.0] - 2026-01-13
 
 ### Added
+- **Path MTU discovery** (`--pmtud`): Binary search to find maximum unfragmented packet size
+  - Uses DF (Don't Fragment) flag to detect MTU limits
+  - Binary search algorithm: starts at 1500, converges to within 8 bytes
+  - Shows progress in TUI title bar: `[MTU: min-max]` during search, `[MTU: X]` when complete
+  - Extracts MTU from ICMP Fragmentation Needed (IPv4 Type 3 Code 4) and ICMPv6 Packet Too Big (Type 2)
+  - Handles EMSGSIZE errors for local interface MTU limits
+  - Requires 2 consecutive successes or failures before moving binary search bounds (handles network flakiness)
+  - IPv4 minimum: 68 bytes (RFC 791), IPv6 minimum: 1280 bytes (RFC 8200)
+  - Conflicts with `--size` (mutually exclusive)
 - **Packet size control** (`--size`): Set probe packet size for MTU testing
   - Range: 36-1500 bytes for IPv4, 56-1500 bytes for IPv6
   - Total packet size includes IP header (20/40 bytes) + protocol header + payload
@@ -66,8 +75,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevents UI flicker while ensuring stale RL doesn't linger
 - **Stable-loss uses recent window**: Detection now uses recent_results loss, not lifetime
   - Fixes sticky RL during recovery when lifetime loss is still high but recent is 0%
+- **PMTUD probe ID collision**: Added `is_pmtud` flag to pending map key
+  - Completely eliminates collision between normal and PMTUD probes with same ProbeId
+- **PMTUD consecutive counter logic**: Direction changes now reset opposite counter
+  - Ensures 2 truly consecutive results before advancing binary search bounds
+- **PMTUD response size verification**: Only process responses matching current probe size
+  - Ignores late responses from previous probe sizes that could corrupt state
+- **IPv6 Packet Too Big handling**: Added dedicated `PacketTooBig` enum variant
+  - ICMPv6 Type 2 now correctly triggers PMTUD MTU clamping
+- **Multi-target JSON output**: Multiple targets now wrapped in JSON array
+  - Previously output invalid JSON (concatenated objects without delimiters)
+- **TUI pause state sync**: Switching targets now syncs pause indicator with target's state
+  - Previously pause indicator could be stale after Tab/n target switch
+
+### Changed
+- **Dependencies updated**: ratatui 0.28→0.30, crossterm 0.28→0.29, maxminddb 0.24→0.27
+  - Fixes RUSTSEC-2025-0132 (maxminddb unsafe memmap), RUSTSEC-2024-0436 (paste unmaintained)
+- **Security audit CI**: Added `.github/workflows/audit.yml` for daily RustSec advisory checks
 
 ### Technical
+- PMTUD: `PmtudState` struct with binary search state (min/max bounds, success/failure counters)
+- PMTUD: `PmtudPhase` enum (WaitingForDestination, Searching, Complete)
+- PMTUD: `set_dont_fragment()` in `socket.rs` for Linux (`IP_MTU_DISCOVER`) and macOS (`IP_DONTFRAG`)
+- PMTUD: MTU extraction from ICMP errors in `correlate.rs` (Type 3 Code 4 for IPv4, Type 2 for ICMPv6)
+- PMTUD: `packet_size` field in `PendingProbe` for correlation
+- PMTUD: Engine sends PMTUD probes at destination TTL after normal traceroute finds destination
 - New `src/state/ratelimit.rs` module for detection logic
 - `RateLimitInfo` struct with suspected flag, confidence (0-1), reason, and loss data
 - Background async worker runs analysis every 2 seconds (lightweight)

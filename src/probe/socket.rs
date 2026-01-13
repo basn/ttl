@@ -118,6 +118,93 @@ pub fn bind_to_source_ip(socket: &Socket, ip: IpAddr) -> Result<()> {
     Ok(())
 }
 
+/// Set Don't Fragment flag for Path MTU Discovery
+/// - IPv4: Sets IP_MTU_DISCOVER = IP_PMTUDISC_DO (always set DF bit)
+/// - IPv6: Sets IPV6_DONTFRAG = 1 (prevent source fragmentation)
+#[cfg(target_os = "linux")]
+pub fn set_dont_fragment(socket: &Socket, ipv6: bool) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    if ipv6 {
+        // IPV6_DONTFRAG = 62 on Linux
+        const IPV6_DONTFRAG: libc::c_int = 62;
+        let val: libc::c_int = 1;
+        let ret = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                IPV6_DONTFRAG,
+                &val as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&val) as libc::socklen_t,
+            )
+        };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    } else {
+        // IP_MTU_DISCOVER = 10, IP_PMTUDISC_DO = 2 on Linux
+        const IP_MTU_DISCOVER: libc::c_int = 10;
+        const IP_PMTUDISC_DO: libc::c_int = 2;
+        let val: libc::c_int = IP_PMTUDISC_DO;
+        let ret = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::IPPROTO_IP,
+                IP_MTU_DISCOVER,
+                &val as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&val) as libc::socklen_t,
+            )
+        };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(())
+}
+
+/// Set Don't Fragment flag for Path MTU Discovery (macOS)
+/// - IPv4: Sets IP_DONTFRAG = 1
+/// - IPv6: Sets IPV6_DONTFRAG = 1
+#[cfg(target_os = "macos")]
+pub fn set_dont_fragment(socket: &Socket, ipv6: bool) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    if ipv6 {
+        // IPV6_DONTFRAG = 62 on macOS
+        const IPV6_DONTFRAG: libc::c_int = 62;
+        let val: libc::c_int = 1;
+        let ret = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                IPV6_DONTFRAG,
+                &val as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&val) as libc::socklen_t,
+            )
+        };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    } else {
+        // IP_DONTFRAG = 28 on macOS
+        const IP_DONTFRAG: libc::c_int = 28;
+        let val: libc::c_int = 1;
+        let ret = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::IPPROTO_IP,
+                IP_DONTFRAG,
+                &val as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&val) as libc::socklen_t,
+            )
+        };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(())
+}
+
 /// Send ICMP packet to target
 pub fn send_icmp(socket: &Socket, packet: &[u8], target: IpAddr) -> Result<usize> {
     let addr = SocketAddr::new(target, 0);

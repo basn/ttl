@@ -25,7 +25,7 @@ pub struct GeoLookup {
 
 impl GeoLookup {
     /// Create a new GeoLookup from a database file path
-    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, maxminddb::MaxMindDBError> {
+    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, maxminddb::MaxMindDbError> {
         let reader = Reader::open_readfile(db_path)?;
 
         Ok(Self {
@@ -97,36 +97,26 @@ impl GeoLookup {
 
     /// Perform the actual database lookup
     fn do_lookup(&self, ip: IpAddr) -> Option<GeoInfo> {
-        let city: geoip2::City = self.reader.lookup(ip).ok()?;
+        // maxminddb 0.27+ returns LookupResult which needs .decode() call
+        let city: geoip2::City = self.reader.lookup(ip).ok()?.decode().ok()??;
 
-        // Extract country (required)
-        let country = city
-            .country
-            .as_ref()
-            .and_then(|c| c.iso_code)
-            .map(|s| s.to_string())?;
+        // Extract country (required) - country struct always exists, iso_code is Option
+        let country = city.country.iso_code.map(|s| s.to_string())?;
 
         // Extract optional fields
-        let city_name = city
-            .city
-            .as_ref()
-            .and_then(|c| c.names.as_ref())
-            .and_then(|n| n.get("en"))
-            .map(|s| s.to_string());
+        // In maxminddb 0.27+, Names has language-specific fields (e.g., .english) instead of HashMap
+        let city_name = city.city.names.english.map(|s| s.to_string());
 
+        // subdivisions is Vec<Subdivision>, get first if exists
         let region = city
             .subdivisions
-            .as_ref()
-            .and_then(|s| s.first())
-            .and_then(|s| s.names.as_ref())
-            .and_then(|n| n.get("en"))
+            .first()
+            .and_then(|s| s.names.english)
             .map(|s| s.to_string());
 
-        let (latitude, longitude) = city
-            .location
-            .as_ref()
-            .map(|loc| (loc.latitude, loc.longitude))
-            .unwrap_or((None, None));
+        // location struct always exists, lat/long are Option
+        let latitude = city.location.latitude;
+        let longitude = city.location.longitude;
 
         Some(GeoInfo {
             city: city_name,

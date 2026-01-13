@@ -101,7 +101,7 @@
 ### v0.8.0 - Probe Control & MTU
 - [x] Source IP selection (`--source-ip 10.0.0.1`)
 - [x] Packet size control (`--size 1400`)
-- [ ] Path MTU discovery mode (binary search for max unfragmented size)
+- [x] Path MTU discovery mode (`--pmtud`, binary search for max unfragmented size)
 - [x] DSCP/ToS marking (`--dscp 46`) for QoS policy testing
 - [x] Flows per second control (`--rate`)
 - [ ] First-hop gateway detection (show which interface/gateway is used)

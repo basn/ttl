@@ -10,7 +10,7 @@ use crate::probe::{
     InterfaceInfo, create_recv_socket_with_interface, get_identifier, parse_icmp_response,
     recv_icmp,
 };
-use crate::state::{IcmpResponseType, MplsLabel, ProbeId, Session};
+use crate::state::{IcmpResponseType, MplsLabel, PmtudPhase, ProbeId, Session};
 use crate::trace::pending::PendingMap;
 
 /// Map of target IP to session, shared across multiple engines and the receiver
@@ -37,6 +37,10 @@ struct BatchedResponse {
     original_src_port: Option<u16>,
     /// Returned source port from ICMP error payload (for NAT detection)
     returned_src_port: Option<u16>,
+    /// Packet size for PMTUD correlation (if this was a PMTUD probe)
+    packet_size: Option<u16>,
+    /// MTU from ICMP Frag Needed / Packet Too Big (for PMTUD)
+    reported_mtu: Option<u16>,
 }
 
 /// The receiver listens for ICMP responses and correlates them to probes
@@ -149,14 +153,23 @@ impl Receiver {
                                 })
                                 .unwrap_or(0);
 
-                            // Find matching pending probe (key includes flow_id and target)
+                            // Find matching pending probe (key includes flow_id, target, is_pmtud)
                             // Try each target since we don't know which target this response is for
+                            // Try normal probes first (is_pmtud=false), then PMTUD probes (is_pmtud=true)
                             let mut found_probe = None;
                             {
                                 let mut pending = self.pending.write();
                                 for target in &self.targets {
+                                    // Try normal probe first
                                     if let Some(probe) =
-                                        pending.remove(&(parsed.probe_id, flow_id, *target))
+                                        pending.remove(&(parsed.probe_id, flow_id, *target, false))
+                                    {
+                                        found_probe = Some(probe);
+                                        break;
+                                    }
+                                    // Try PMTUD probe
+                                    if let Some(probe) =
+                                        pending.remove(&(parsed.probe_id, flow_id, *target, true))
                                     {
                                         found_probe = Some(probe);
                                         break;
@@ -177,6 +190,8 @@ impl Receiver {
                                     flow_id: probe.flow_id,
                                     original_src_port: probe.original_src_port,
                                     returned_src_port: parsed.src_port,
+                                    packet_size: probe.packet_size,
+                                    reported_mtu: parsed.mtu,
                                 });
                             } else {
                                 // Late packet arrival - response came after timeout
@@ -249,6 +264,35 @@ impl Receiver {
                                 state.dest_ttl = Some(ttl);
                             }
                         }
+
+                        // PMTUD: Update state if this was a PMTUD probe
+                        // Verify packet_size matches current_size to ignore late responses from old sizes
+                        if let Some(probe_size) = resp.packet_size
+                            && let Some(ref mut pmtud) = state.pmtud
+                            && pmtud.phase == PmtudPhase::Searching
+                            && probe_size == pmtud.current_size
+                        {
+                            // Check if this is Fragmentation Needed / Packet Too Big
+                            let is_frag_needed = matches!(
+                                resp.response_type,
+                                IcmpResponseType::DestUnreachable(4)  // IPv4 Frag Needed
+                                    | IcmpResponseType::PacketTooBig // ICMPv6 Packet Too Big
+                            );
+
+                            if is_frag_needed {
+                                // ICMP Frag Needed - use reported MTU if available
+                                if let Some(mtu) = resp.reported_mtu {
+                                    pmtud.record_frag_needed(mtu);
+                                } else {
+                                    // No MTU in response - treat as failure
+                                    pmtud.record_failure();
+                                }
+                            } else {
+                                // Any other response = success at this size
+                                // (EchoReply, TimeExceeded, PortUnreachable, etc.)
+                                pmtud.record_success();
+                            }
+                        }
                     }
                 }
             }
@@ -260,8 +304,8 @@ impl Receiver {
                 let mut pending = self.pending.write();
                 let sessions = self.sessions.read();
                 let timeout = self.timeout;
-                // Key is (ProbeId, flow_id, target) tuple
-                pending.retain(|(probe_id, _flow_id, target), probe| {
+                // Key is (ProbeId, flow_id, target, is_pmtud) tuple
+                pending.retain(|(probe_id, _flow_id, target, _is_pmtud), probe| {
                     if now.duration_since(probe.sent_at) > timeout {
                         // Record timeout (both hop-level and flow-level)
                         if let Some(session) = sessions.get(target) {
@@ -269,6 +313,16 @@ impl Receiver {
                             if let Some(hop) = state.hop_mut(probe_id.ttl) {
                                 hop.record_timeout();
                                 hop.record_flow_timeout(probe.flow_id);
+                            }
+
+                            // PMTUD: Record failure for timed out PMTUD probes
+                            // Verify packet_size matches current_size to ignore late timeouts from old sizes
+                            if let Some(probe_size) = probe.packet_size
+                                && let Some(ref mut pmtud) = state.pmtud
+                                && pmtud.phase == PmtudPhase::Searching
+                                && probe_size == pmtud.current_size
+                            {
+                                pmtud.record_failure();
                             }
                         }
                         false

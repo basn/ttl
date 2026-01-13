@@ -21,9 +21,11 @@ pub struct PendingProbe {
     pub flow_id: u8,
     /// Original source port for NAT detection (UDP/TCP only, None for ICMP)
     pub original_src_port: Option<u16>,
+    /// Packet size for PMTUD correlation (only set during PMTUD phase)
+    pub packet_size: Option<u16>,
 }
 
-/// Key for pending probe lookup: (ProbeId, flow_id, target)
+/// Key for pending probe lookup: (ProbeId, flow_id, target, is_pmtud)
 ///
 /// Flow ID is included in the key because multi-flow mode sends the same ProbeId
 /// for each flow per tick. Without flow_id in the key, entries would overwrite
@@ -31,9 +33,13 @@ pub struct PendingProbe {
 ///
 /// Target is included to support multiple simultaneous targets - each target
 /// has independent probe sequences.
-pub type PendingKey = (ProbeId, u8, IpAddr);
+///
+/// is_pmtud distinguishes PMTUD probes from normal probes, preventing collision
+/// when both use the same ProbeId (e.g., when dest discovered at tick N and
+/// PMTUD seq wraps to N).
+pub type PendingKey = (ProbeId, u8, IpAddr, bool);
 
-/// Thread-safe map of pending probes keyed by (ProbeId, flow_id, target)
+/// Thread-safe map of pending probes keyed by (ProbeId, flow_id, target, is_pmtud)
 pub type PendingMap = Arc<RwLock<HashMap<PendingKey, PendingProbe>>>;
 
 /// Create a new empty pending map

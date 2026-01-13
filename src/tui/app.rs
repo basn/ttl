@@ -101,14 +101,18 @@ pub async fn run_tui(
     Ok(theme_names[ui_state.theme_index].to_string())
 }
 
-async fn run_app<B: ratatui::backend::Backend>(
+async fn run_app<B>(
     terminal: &mut Terminal<B>,
     sessions: SessionMap,
     targets: Vec<IpAddr>,
     ui_state: &mut UiState,
     cancel: CancellationToken,
     tick_rate: Duration,
-) -> Result<()> {
+) -> Result<()>
+where
+    B: ratatui::backend::Backend,
+    B::Error: Send + Sync + 'static,
+{
     let theme_names = Theme::list();
     let num_targets = targets.len();
 
@@ -177,6 +181,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                             num_targets,
                             target
                         ));
+                        // Sync pause state with new target's session
+                        let sessions_read = sessions.read();
+                        if let Some(state) = sessions_read.get(&target) {
+                            ui_state.paused = state.read().paused;
+                        }
                     }
                 }
                 KeyCode::BackTab | KeyCode::Char('N') => {
@@ -194,6 +203,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                             num_targets,
                             target
                         ));
+                        // Sync pause state with new target's session
+                        let sessions_read = sessions.read();
+                        if let Some(state) = sessions_read.get(&target) {
+                            ui_state.paused = state.read().paused;
+                        }
                     }
                 }
                 KeyCode::Char('p') => {
