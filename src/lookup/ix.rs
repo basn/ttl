@@ -3,7 +3,7 @@
 //! Identifies when a hop is at an Internet Exchange point by matching
 //! IP addresses against IX peering LAN prefixes from PeeringDB.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ipnetwork::IpNetwork;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -11,14 +11,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
 use crate::state::IxInfo;
-use crate::trace::SessionMap;
+use crate::trace::receiver::SessionMap;
 
 /// PeeringDB API response wrapper
 #[derive(Debug, Deserialize)]
@@ -149,10 +149,10 @@ impl IxLookup {
         {
             let ip_cache = self.ip_cache.read();
             let ip_times = self.ip_cache_times.read();
-            if let (Some(result), Some(time)) = (ip_cache.get(&ip), ip_times.get(&ip)) {
-                if time.elapsed() < self.ip_cache_ttl {
-                    return result.clone();
-                }
+            if let (Some(result), Some(time)) = (ip_cache.get(&ip), ip_times.get(&ip))
+                && time.elapsed() < self.ip_cache_ttl
+            {
+                return result.clone();
             }
         }
 
@@ -175,7 +175,7 @@ impl IxLookup {
             let result = self
                 .load_once
                 .get_or_try_init(|| async {
-                    self.load_data_inner().await.map_err(|e| {
+                    self.load_data_inner().await.inspect_err(|_e| {
                         let now = SystemTime::now()
                             .duration_since(SystemTime::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -183,7 +183,6 @@ impl IxLookup {
                         self.last_failure.store(now, Ordering::Relaxed);
                         // Don't print to stderr - it corrupts TUI
                         // Silently fail; IX detection is optional enrichment
-                        e
                     })
                 })
                 .await;
@@ -217,11 +216,11 @@ impl IxLookup {
     /// Load IX data from cache or API
     async fn load_data_inner(&self) -> Result<()> {
         // Try loading from cache first
-        if let Ok(cache) = self.load_cache() {
-            if !cache.is_expired() {
-                self.populate_from_cache(&cache)?;
-                return Ok(());
-            }
+        if let Ok(cache) = self.load_cache()
+            && !cache.is_expired()
+        {
+            self.populate_from_cache(&cache)?;
+            return Ok(());
         }
 
         // Fetch from API
@@ -321,10 +320,8 @@ impl IxLookup {
 
         // Build lookup maps
         // ixlan_id -> ix_id
-        let ixlan_to_ix: HashMap<u32, u32> = ixlan_data
-            .iter()
-            .map(|lan| (lan.id, lan.ix_id))
-            .collect();
+        let ixlan_to_ix: HashMap<u32, u32> =
+            ixlan_data.iter().map(|lan| (lan.id, lan.ix_id)).collect();
 
         // ix_id -> IX info
         let ix_info: HashMap<u32, IxCacheEntry> = ix_data
@@ -344,15 +341,15 @@ impl IxLookup {
         // Build prefix cache entries
         let mut prefixes = Vec::with_capacity(ixpfx_data.len());
         for pfx in ixpfx_data {
-            if let Some(&ix_id) = ixlan_to_ix.get(&pfx.ixlan_id) {
-                if let Some(ix) = ix_info.get(&ix_id) {
-                    prefixes.push(PrefixCacheEntry {
-                        prefix: pfx.prefix,
-                        ix_name: ix.name.clone(),
-                        ix_city: ix.city.clone(),
-                        ix_country: ix.country.clone(),
-                    });
-                }
+            if let Some(&ix_id) = ixlan_to_ix.get(&pfx.ixlan_id)
+                && let Some(ix) = ix_info.get(&ix_id)
+            {
+                prefixes.push(PrefixCacheEntry {
+                    prefix: pfx.prefix,
+                    ix_name: ix.name.clone(),
+                    ix_city: ix.city.clone(),
+                    ix_country: ix.country.clone(),
+                });
             }
         }
 
@@ -391,6 +388,7 @@ impl IxLookup {
     }
 
     /// Get the number of prefixes loaded
+    #[allow(dead_code)]
     pub fn prefix_count(&self) -> usize {
         self.prefixes.read().len()
     }
@@ -658,16 +656,14 @@ mod tests {
         let cache_path = temp_dir.join("ix_cache.json");
 
         let lookup = IxLookup {
-            prefixes: RwLock::new(vec![
-                PrefixEntry {
-                    network: "206.223.115.0/24".parse().unwrap(),
-                    info: IxInfo {
-                        name: "Test IX".to_string(),
-                        city: Some("Test City".to_string()),
-                        country: Some("US".to_string()),
-                    },
+            prefixes: RwLock::new(vec![PrefixEntry {
+                network: "206.223.115.0/24".parse().unwrap(),
+                info: IxInfo {
+                    name: "Test IX".to_string(),
+                    city: Some("Test City".to_string()),
+                    country: Some("US".to_string()),
                 },
-            ]),
+            }]),
             cache_path,
             load_once: OnceCell::const_new_with(()), // Pre-filled = loaded
             last_failure: AtomicU64::new(0),
@@ -700,16 +696,14 @@ mod tests {
         let cache_path = temp_dir.join("ix_cache.json");
 
         let lookup = IxLookup {
-            prefixes: RwLock::new(vec![
-                PrefixEntry {
-                    network: "206.223.115.0/24".parse().unwrap(),
-                    info: IxInfo {
-                        name: "Cached IX".to_string(),
-                        city: None,
-                        country: None,
-                    },
+            prefixes: RwLock::new(vec![PrefixEntry {
+                network: "206.223.115.0/24".parse().unwrap(),
+                info: IxInfo {
+                    name: "Cached IX".to_string(),
+                    city: None,
+                    country: None,
                 },
-            ]),
+            }]),
             cache_path,
             load_once: OnceCell::const_new_with(()),
             last_failure: AtomicU64::new(0),

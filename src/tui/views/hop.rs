@@ -33,7 +33,9 @@ impl Widget for HopDetailView<'_> {
         Clear.render(popup_area, buf);
 
         let stats = self.hop.primary_stats();
-        let ip = stats.map(|s| s.ip.to_string()).unwrap_or_else(|| "* * *".to_string());
+        let ip = stats
+            .map(|s| s.ip.to_string())
+            .unwrap_or_else(|| "* * *".to_string());
         let title = format!(" Hop {}: {} ", self.hop.ttl, ip);
 
         let block = Block::default()
@@ -95,14 +97,11 @@ impl Widget for HopDetailView<'_> {
 
             // IX (if available - PeeringDB)
             if let Some(ref ix) = stats.ix {
-                let ix_location = [
-                    ix.city.as_deref(),
-                    ix.country.as_deref(),
-                ]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(", ");
+                let ix_location = [ix.city.as_deref(), ix.country.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
                 let ix_str = if ix_location.is_empty() {
                     ix.name.clone()
@@ -156,7 +155,10 @@ impl Widget for HopDetailView<'_> {
                     Span::styled("  Min: ", Style::default().fg(self.theme.text_dim)),
                     Span::raw(format!("{:.2}ms    ", stats.min_rtt.as_secs_f64() * 1000.0)),
                     Span::styled("Avg: ", Style::default().fg(self.theme.text_dim)),
-                    Span::raw(format!("{:.2}ms    ", stats.avg_rtt().as_secs_f64() * 1000.0)),
+                    Span::raw(format!(
+                        "{:.2}ms    ",
+                        stats.avg_rtt().as_secs_f64() * 1000.0
+                    )),
                     Span::styled("Max: ", Style::default().fg(self.theme.text_dim)),
                     Span::raw(format!("{:.2}ms", stats.max_rtt.as_secs_f64() * 1000.0)),
                 ]));
@@ -190,12 +192,21 @@ impl Widget for HopDetailView<'_> {
                 // Jitter stats (RTT variance between consecutive probes)
                 // "Smoothed" = RFC 3550 exponential average, "Avg/Max" = raw sample deltas
                 lines.push(Line::from(vec![
-                    Span::styled("  Jitter (smoothed): ", Style::default().fg(self.theme.text_dim)),
+                    Span::styled(
+                        "  Jitter (smoothed): ",
+                        Style::default().fg(self.theme.text_dim),
+                    ),
                     Span::raw(format!("{:.2}ms  ", stats.jitter().as_secs_f64() * 1000.0)),
                     Span::styled("Avg: ", Style::default().fg(self.theme.text_dim)),
-                    Span::raw(format!("{:.2}ms  ", stats.jitter_avg().as_secs_f64() * 1000.0)),
+                    Span::raw(format!(
+                        "{:.2}ms  ",
+                        stats.jitter_avg().as_secs_f64() * 1000.0
+                    )),
                     Span::styled("Max: ", Style::default().fg(self.theme.text_dim)),
-                    Span::raw(format!("{:.2}ms", stats.jitter_max().as_secs_f64() * 1000.0)),
+                    Span::raw(format!(
+                        "{:.2}ms",
+                        stats.jitter_max().as_secs_f64() * 1000.0
+                    )),
                 ]));
             }
 
@@ -226,14 +237,19 @@ impl Widget for HopDetailView<'_> {
                         Span::raw(format!("{}", nat_info.port_matched)),
                         Span::styled("  Rewrites: ", Style::default().fg(self.theme.text_dim)),
                         Span::styled(
-                            format!("{} ({:.0}%)", nat_info.port_rewritten, nat_info.nat_percentage()),
+                            format!(
+                                "{} ({:.0}%)",
+                                nat_info.port_rewritten,
+                                nat_info.nat_percentage()
+                            ),
                             Style::default().fg(self.theme.warning),
                         ),
                     ]));
 
                     // Show rewrite samples (original → returned)
                     if !nat_info.rewrite_samples.is_empty() {
-                        let samples: Vec<String> = nat_info.rewrite_samples
+                        let samples: Vec<String> = nat_info
+                            .rewrite_samples
                             .iter()
                             .take(3)
                             .map(|(orig, ret)| format!("{}->{}", orig, ret))
@@ -265,28 +281,28 @@ impl Widget for HopDetailView<'_> {
             }
 
             // Rate limit detection info (if present)
-            if let Some(ref rl) = self.hop.rate_limit {
-                if rl.suspected {
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(vec![Span::styled(
-                        "  Rate Limiting Suspected",
-                        Style::default().fg(self.theme.warning),
-                    )]));
-                    if let Some(ref reason) = rl.reason {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Reason: ", Style::default().fg(self.theme.text_dim)),
-                            Span::raw(reason.clone()),
-                        ]));
-                    }
+            if let Some(ref rl) = self.hop.rate_limit
+                && rl.suspected
+            {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled(
+                    "  Rate Limiting Suspected",
+                    Style::default().fg(self.theme.warning),
+                )]));
+                if let Some(ref reason) = rl.reason {
                     lines.push(Line::from(vec![
-                        Span::styled("  Confidence: ", Style::default().fg(self.theme.text_dim)),
-                        Span::raw(format!("{:.0}%", rl.confidence * 100.0)),
-                    ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("  Tip: ", Style::default().fg(self.theme.text_dim)),
-                        Span::raw("Try slower probing with -i 1.0 or -i 2.0"),
+                        Span::styled("  Reason: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(reason.clone()),
                     ]));
                 }
+                lines.push(Line::from(vec![
+                    Span::styled("  Confidence: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw(format!("{:.0}%", rl.confidence * 100.0)),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("  Tip: ", Style::default().fg(self.theme.text_dim)),
+                    Span::raw("Try slower probing with -i 1.0 or -i 2.0"),
+                ]));
             }
 
             // Per-flow paths (Paris/Dublin traceroute ECMP detection)
@@ -301,16 +317,25 @@ impl Widget for HopDetailView<'_> {
                 let num_paths = self.hop.path_count();
                 for (flow_id, responder_ip) in &ecmp_paths {
                     // Look up hostname from responders map
-                    let hostname = self.hop.responders.get(responder_ip)
+                    let hostname = self
+                        .hop
+                        .responders
+                        .get(responder_ip)
                         .and_then(|s| s.hostname.as_ref())
                         .map(|h| format!(" ({})", h))
                         .unwrap_or_default();
 
                     // Mark if this is a unique path
-                    let is_unique = ecmp_paths.iter()
+                    let is_unique = ecmp_paths
+                        .iter()
                         .filter(|(_, ip)| ip == responder_ip)
-                        .count() == 1;
-                    let marker = if is_unique && num_paths > 1 { " ← alt path" } else { "" };
+                        .count()
+                        == 1;
+                    let marker = if is_unique && num_paths > 1 {
+                        " ← alt path"
+                    } else {
+                        ""
+                    };
 
                     lines.push(Line::from(vec![
                         Span::raw(format!("    Flow {}: ", flow_id)),
@@ -346,7 +371,11 @@ impl Widget for HopDetailView<'_> {
                             Span::raw("    "),
                             Span::raw(format!("{}{}", ip, hostname)),
                             Span::styled(
-                                format!(" - {} responses, avg {:.1}ms", other_stats.received, other_stats.avg_rtt().as_secs_f64() * 1000.0),
+                                format!(
+                                    " - {} responses, avg {:.1}ms",
+                                    other_stats.received,
+                                    other_stats.avg_rtt().as_secs_f64() * 1000.0
+                                ),
                                 Style::default().fg(self.theme.text_dim),
                             ),
                         ]));
@@ -358,9 +387,10 @@ impl Widget for HopDetailView<'_> {
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("  [Esc] back", Style::default().fg(self.theme.text_dim)),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "  [Esc] back",
+            Style::default().fg(self.theme.text_dim),
+        )]));
 
         let paragraph = Paragraph::new(lines);
         paragraph.render(inner, buf);

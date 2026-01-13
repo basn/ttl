@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::probe::{
-    create_recv_socket_with_interface, get_identifier, parse_icmp_response, recv_icmp,
-    InterfaceInfo,
+    InterfaceInfo, create_recv_socket_with_interface, get_identifier, parse_icmp_response,
+    recv_icmp,
 };
 use crate::state::{IcmpResponseType, MplsLabel, ProbeId, Session};
 use crate::trace::pending::PendingMap;
@@ -60,6 +60,7 @@ pub struct Receiver {
 }
 
 impl Receiver {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sessions: SessionMap,
         pending: PendingMap,
@@ -154,7 +155,9 @@ impl Receiver {
                             {
                                 let mut pending = self.pending.write();
                                 for target in &self.targets {
-                                    if let Some(probe) = pending.remove(&(parsed.probe_id, flow_id, *target)) {
+                                    if let Some(probe) =
+                                        pending.remove(&(parsed.probe_id, flow_id, *target))
+                                    {
                                         found_probe = Some(probe);
                                         break;
                                     }
@@ -225,7 +228,11 @@ impl Receiver {
                         let mut state = session.write();
                         if let Some(hop) = state.hop_mut(resp.probe_id.ttl) {
                             // Record aggregate stats (existing behavior)
-                            hop.record_response_with_mpls(resp.responder, resp.rtt, resp.mpls_labels);
+                            hop.record_response_with_mpls(
+                                resp.responder,
+                                resp.rtt,
+                                resp.mpls_labels,
+                            );
                             // Record per-flow stats for Paris/Dublin traceroute ECMP detection
                             hop.record_flow_response(resp.flow_id, resp.responder, resp.rtt);
                             // Record NAT detection result (compare sent vs returned source port)
@@ -277,6 +284,7 @@ impl Receiver {
 }
 
 /// Spawn the receiver on a dedicated OS thread
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_receiver(
     sessions: SessionMap,
     pending: PendingMap,
@@ -290,13 +298,19 @@ pub fn spawn_receiver(
 ) -> std::thread::JoinHandle<Result<()>> {
     std::thread::spawn(move || {
         let receiver = Receiver::new(
-            sessions, pending, cancel, timeout, ipv6, src_port_base, num_flows, interface, recv_any,
+            sessions,
+            pending,
+            cancel,
+            timeout,
+            ipv6,
+            src_port_base,
+            num_flows,
+            interface,
+            recv_any,
         );
 
         // Catch panics and convert to error with details
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            receiver.run_blocking()
-        })) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| receiver.run_blocking())) {
             Ok(result) => result,
             Err(panic_payload) => {
                 let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {

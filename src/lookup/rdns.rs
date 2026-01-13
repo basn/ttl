@@ -1,6 +1,6 @@
 use anyhow::Result;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::trace::SessionMap;
+use crate::trace::receiver::SessionMap;
 
 /// DNS cache entry
 struct CacheEntry {
@@ -25,7 +25,8 @@ pub struct DnsLookup {
 
 impl DnsLookup {
     pub async fn new() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
         Ok(Self {
             resolver,
@@ -39,10 +40,10 @@ impl DnsLookup {
         // Check cache first
         {
             let cache = self.cache.read();
-            if let Some(entry) = cache.get(&ip) {
-                if entry.cached_at.elapsed() < self.cache_ttl {
-                    return entry.hostname.clone();
-                }
+            if let Some(entry) = cache.get(&ip)
+                && entry.cached_at.elapsed() < self.cache_ttl
+            {
+                return entry.hostname.clone();
             }
         }
 
@@ -76,11 +77,7 @@ impl DnsLookup {
 const MAX_CONCURRENT_LOOKUPS: usize = 10;
 
 /// Background DNS lookup worker that updates session state (multi-target)
-pub async fn run_dns_worker(
-    dns: Arc<DnsLookup>,
-    sessions: SessionMap,
-    cancel: CancellationToken,
-) {
+pub async fn run_dns_worker(dns: Arc<DnsLookup>, sessions: SessionMap, cancel: CancellationToken) {
     let mut interval = tokio::time::interval(Duration::from_millis(500));
 
     loop {

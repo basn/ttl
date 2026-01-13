@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, SocketAddr};
@@ -22,9 +22,7 @@ pub fn check_permissions() -> Result<SocketCapability> {
 
     // Try unprivileged ICMP (SOCK_DGRAM with IPPROTO_ICMP)
     if create_dgram_icmp_socket().is_ok() {
-        eprintln!(
-            "Warning: Using unprivileged ICMP sockets. Some features may be limited."
-        );
+        eprintln!("Warning: Using unprivileged ICMP sockets. Some features may be limited.");
         return Ok(SocketCapability::Dgram);
     }
 
@@ -100,6 +98,18 @@ pub fn set_ttl(socket: &Socket, ttl: u8) -> Result<()> {
     Ok(())
 }
 
+/// Set DSCP/ToS value on socket for QoS testing
+/// DSCP occupies upper 6 bits of TOS byte, so shift left by 2
+pub fn set_dscp(socket: &Socket, dscp: u8, ipv6: bool) -> Result<()> {
+    let tos = (dscp as u32) << 2;
+    if ipv6 {
+        socket.set_tclass_v6(tos)?;
+    } else {
+        socket.set_tos(tos)?;
+    }
+    Ok(())
+}
+
 /// Send ICMP packet to target
 pub fn send_icmp(socket: &Socket, packet: &[u8], target: IpAddr) -> Result<usize> {
     let addr = SocketAddr::new(target, 0);
@@ -127,7 +137,7 @@ pub fn recv_icmp(socket: &Socket, buffer: &mut [u8]) -> Result<(usize, IpAddr)> 
 // Interface-aware socket creation variants
 // ============================================================================
 
-use crate::probe::interface::{bind_socket_to_interface, InterfaceInfo};
+use crate::probe::interface::{InterfaceInfo, bind_socket_to_interface};
 
 /// Create a socket for sending ICMP probes, optionally bound to an interface
 pub fn create_send_socket_with_interface(

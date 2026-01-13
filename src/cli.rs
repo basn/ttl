@@ -105,6 +105,14 @@ pub struct Args {
     /// Don't bind receiver socket to interface (allows asymmetric routing)
     #[arg(long = "recv-any", requires = "interface")]
     pub recv_any: bool,
+
+    /// DSCP value for QoS testing (0-63)
+    #[arg(long = "dscp", value_parser = clap::value_parser!(u8).range(0..=63))]
+    pub dscp: Option<u8>,
+
+    /// Probe packet size in bytes (28-1500, includes IP+ICMP headers)
+    #[arg(long = "size", value_parser = clap::value_parser!(u16).range(28..=1500))]
+    pub size: Option<u16>,
 }
 
 impl Args {
@@ -135,7 +143,10 @@ impl Args {
 
         let protocol = self.protocol.to_lowercase();
         if !["auto", "icmp", "udp", "tcp"].contains(&protocol.as_str()) {
-            return Err(format!("Unknown protocol: {}. Use auto, icmp, udp, or tcp", self.protocol));
+            return Err(format!(
+                "Unknown protocol: {}. Use auto, icmp, udp, or tcp",
+                self.protocol
+            ));
         }
 
         if self.interval <= 0.0 {
@@ -162,7 +173,10 @@ impl Args {
         }
         const MAX_FLOWS: u8 = 16;
         if self.flows > MAX_FLOWS {
-            return Err(format!("Flows cannot exceed {} (resource limit)", MAX_FLOWS));
+            return Err(format!(
+                "Flows cannot exceed {} (resource limit)",
+                MAX_FLOWS
+            ));
         }
 
         // Validate interface name

@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::session::{Hop, RateLimitInfo, Session};
-use crate::trace::SessionMap;
+use crate::trace::receiver::SessionMap;
 
 /// Analyze a session for rate limit indicators at all hops
 pub fn analyze_rate_limiting(session: &mut Session) {
@@ -81,35 +81,34 @@ fn detect_rate_limiting(session: &Session, ttl: u8) -> Option<RateLimitInfo> {
     // Check 1: Isolated hop loss (strongest signal)
     // Loss here but healthy downstream = rate limiting
     let downstream_loss = find_next_responding_hop_loss(session, ttl);
-    if let Some(dl) = downstream_loss {
-        if hop_loss > 15.0 && dl < 5.0 {
-            return Some(RateLimitInfo {
-                suspected: true,
-                confidence: 0.85,
-                reason: Some(format!(
-                    "{:.0}% loss here but {:.0}% downstream - packets aren't being dropped",
-                    hop_loss, dl
-                )),
-                hop_loss,
-                downstream_loss: Some(dl),
-                negative_checks: 0,
-            });
-        }
+    if let Some(dl) = downstream_loss
+        && hop_loss > 15.0
+        && dl < 5.0
+    {
+        return Some(RateLimitInfo {
+            suspected: true,
+            confidence: 0.85,
+            reason: Some(format!(
+                "{:.0}% loss here but {:.0}% downstream - packets aren't being dropped",
+                hop_loss, dl
+            )),
+            hop_loss,
+            downstream_loss: Some(dl),
+            negative_checks: 0,
+        });
     }
 
     // Check 2: Uniform loss across all flows (Paris/Dublin traceroute)
     // If all flows lose equally, it's hop-level rate limiting, not path diversity
-    if hop.flow_paths.len() >= 2 {
-        if is_uniform_flow_loss(hop) {
-            return Some(RateLimitInfo {
-                suspected: true,
-                confidence: 0.75,
-                reason: Some("All flows showing equal loss (rate limit, not path issue)".into()),
-                hop_loss,
-                downstream_loss,
-                negative_checks: 0,
-            });
-        }
+    if hop.flow_paths.len() >= 2 && is_uniform_flow_loss(hop) {
+        return Some(RateLimitInfo {
+            suspected: true,
+            confidence: 0.75,
+            reason: Some("All flows showing equal loss (rate limit, not path issue)".into()),
+            hop_loss,
+            downstream_loss,
+            negative_checks: 0,
+        });
     }
 
     // Check 3: Consistent loss ratio over time
@@ -159,7 +158,9 @@ fn is_uniform_flow_loss(hop: &Hop) -> bool {
         return false;
     }
 
-    let losses: Vec<f64> = hop.flow_paths.values()
+    let losses: Vec<f64> = hop
+        .flow_paths
+        .values()
         .filter(|fp| fp.sent >= 5) // Need enough samples
         .map(|fp| {
             let completed = fp.received + fp.timeouts;
@@ -182,9 +183,7 @@ fn is_uniform_flow_loss(hop: &Hop) -> bool {
 
     // Calculate standard deviation
     let mean = losses.iter().sum::<f64>() / losses.len() as f64;
-    let variance = losses.iter()
-        .map(|&l| (l - mean).powi(2))
-        .sum::<f64>() / losses.len() as f64;
+    let variance = losses.iter().map(|&l| (l - mean).powi(2)).sum::<f64>() / losses.len() as f64;
     let stddev = variance.sqrt();
 
     // Low standard deviation = uniform loss across flows
@@ -205,15 +204,24 @@ fn is_stable_loss_ratio(recent: &VecDeque<bool>) -> bool {
     let seg2_len = len / 3;
     let seg3_len = len - seg1_len - seg2_len; // Gets any remainder
 
-    let first_loss = recent.iter().take(seg1_len)
-        .filter(|&&r| !r).count() as f64 / seg1_len as f64;
-    let second_loss = recent.iter().skip(seg1_len).take(seg2_len)
-        .filter(|&&r| !r).count() as f64 / seg2_len as f64;
-    let third_loss = recent.iter().skip(seg1_len + seg2_len)
-        .filter(|&&r| !r).count() as f64 / seg3_len as f64;
+    let first_loss = recent.iter().take(seg1_len).filter(|&&r| !r).count() as f64 / seg1_len as f64;
+    let second_loss = recent
+        .iter()
+        .skip(seg1_len)
+        .take(seg2_len)
+        .filter(|&&r| !r)
+        .count() as f64
+        / seg2_len as f64;
+    let third_loss = recent
+        .iter()
+        .skip(seg1_len + seg2_len)
+        .filter(|&&r| !r)
+        .count() as f64
+        / seg3_len as f64;
 
     // Calculate max difference between any two periods
-    let max_diff = (first_loss - second_loss).abs()
+    let max_diff = (first_loss - second_loss)
+        .abs()
         .max((second_loss - third_loss).abs())
         .max((first_loss - third_loss).abs());
 
@@ -222,10 +230,7 @@ fn is_stable_loss_ratio(recent: &VecDeque<bool>) -> bool {
 }
 
 /// Background worker that periodically analyzes sessions for rate limiting
-pub async fn run_ratelimit_worker(
-    sessions: SessionMap,
-    cancel: CancellationToken,
-) {
+pub async fn run_ratelimit_worker(sessions: SessionMap, cancel: CancellationToken) {
     // Run analysis every 2 seconds (doesn't need to be faster since loss
     // patterns take time to develop)
     let mut interval = tokio::time::interval(Duration::from_secs(2));

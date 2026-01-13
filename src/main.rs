@@ -22,12 +22,18 @@ mod tui;
 use cli::Args;
 use config::Config;
 use export::{export_csv, export_json, generate_report};
-use lookup::{run_asn_worker, run_dns_worker, run_geo_worker, run_ix_worker, AsnLookup, DnsLookup, GeoLookup, IxLookup};
+use lookup::asn::{AsnLookup, run_asn_worker};
+use lookup::geo::{GeoLookup, run_geo_worker};
+use lookup::ix::{IxLookup, run_ix_worker};
+use lookup::rdns::{DnsLookup, run_dns_worker};
 use prefs::Prefs;
-use probe::{check_permissions, validate_interface, InterfaceInfo};
-use state::{run_ratelimit_worker, Session, Target};
-use trace::{new_pending_map, spawn_receiver, ProbeEngine, SessionMap};
-use tui::{run_tui, Theme};
+use probe::{InterfaceInfo, check_permissions, validate_interface};
+use state::{Session, Target, run_ratelimit_worker};
+use trace::engine::ProbeEngine;
+use trace::pending::new_pending_map;
+use trace::receiver::{SessionMap, spawn_receiver};
+use tui::app::run_tui;
+use tui::theme::Theme;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -74,7 +80,10 @@ async fn main() -> Result<()> {
 
         // Skip duplicate targets
         if sessions_map.contains_key(&resolved_ip) {
-            eprintln!("Warning: Duplicate target {} ({}), skipping", target_str, resolved_ip);
+            eprintln!(
+                "Warning: Duplicate target {} ({}), skipping",
+                target_str, resolved_ip
+            );
             continue;
         }
 
@@ -141,11 +150,11 @@ async fn main() -> Result<()> {
 fn load_session(path: &str) -> Result<Session> {
     const MAX_REPLAY_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open replay file: {}", path))?;
+    let file = File::open(path).with_context(|| format!("Failed to open replay file: {}", path))?;
 
     // Check file size to prevent DoS via huge JSON
-    let metadata = file.metadata()
+    let metadata = file
+        .metadata()
         .with_context(|| format!("Failed to read replay file metadata: {}", path))?;
     if metadata.len() > MAX_REPLAY_SIZE {
         anyhow::bail!("Replay file too large (max 10MB): {}", path);
@@ -242,14 +251,15 @@ fn resolve_target(target: &str, force_ipv4: bool, force_ipv6: bool) -> Result<Ip
         .collect();
 
     if filtered.is_empty() {
-        anyhow::bail!("No {} addresses found", if force_ipv4 { "IPv4" } else { "IPv6" });
+        anyhow::bail!(
+            "No {} addresses found",
+            if force_ipv4 { "IPv4" } else { "IPv6" }
+        );
     }
 
     // Prefer IPv4 by default if no preference
-    if !force_ipv6 {
-        if let Some(ipv4) = filtered.iter().find(|ip| ip.is_ipv4()) {
-            return Ok(*ipv4);
-        }
+    if !force_ipv6 && let Some(ipv4) = filtered.iter().find(|ip| ip.is_ipv4()) {
+        return Ok(*ipv4);
     }
 
     Ok(filtered[0])
@@ -305,7 +315,11 @@ async fn run_interactive_mode(
     // Spawn DNS worker (if enabled)
     let dns_handle = if config.dns_enabled {
         let dns = Arc::new(DnsLookup::new().await?);
-        Some(tokio::spawn(run_dns_worker(dns, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_dns_worker(
+            dns,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -313,7 +327,11 @@ async fn run_interactive_mode(
     // Spawn ASN worker (if enabled)
     let asn_handle = if config.asn_enabled {
         let asn = Arc::new(AsnLookup::new().await?);
-        Some(tokio::spawn(run_asn_worker(asn, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_asn_worker(
+            asn,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -334,12 +352,13 @@ async fn run_interactive_mode(
             GeoLookup::try_default()
         };
 
-        if let Some(geo) = geo_lookup {
-            Some(tokio::spawn(run_geo_worker(Arc::new(geo), sessions.clone(), cancel.clone())))
-        } else {
-            // No database found, continue without geo
-            None
-        }
+        geo_lookup.map(|geo| {
+            tokio::spawn(run_geo_worker(
+                Arc::new(geo),
+                sessions.clone(),
+                cancel.clone(),
+            ))
+        })
     } else {
         None
     };
@@ -347,7 +366,11 @@ async fn run_interactive_mode(
     // Spawn IX worker (if enabled)
     let ix_handle = if config.ix_enabled {
         match IxLookup::new() {
-            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(
+                Arc::new(ix),
+                sessions.clone(),
+                cancel.clone(),
+            ))),
             Err(e) => {
                 eprintln!("Warning: Failed to initialize IX lookup: {}", e);
                 None
@@ -387,7 +410,9 @@ async fn run_interactive_mode(
     receiver_handle.join().map_err(|e| {
         // This branch shouldn't be reached since we use catch_unwind in the receiver,
         // but handle it just in case something panics outside the protected region
-        let msg = e.downcast_ref::<&str>().map(|s| s.to_string())
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
             .or_else(|| e.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".to_string());
         anyhow::anyhow!("Receiver thread failed: {}", msg)
@@ -459,7 +484,11 @@ async fn run_batch_mode(
     // Spawn DNS worker (if enabled)
     let dns_handle = if config.dns_enabled {
         let dns = Arc::new(DnsLookup::new().await?);
-        Some(tokio::spawn(run_dns_worker(dns, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_dns_worker(
+            dns,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -467,7 +496,11 @@ async fn run_batch_mode(
     // Spawn ASN worker (if enabled)
     let asn_handle = if config.asn_enabled {
         let asn = Arc::new(AsnLookup::new().await?);
-        Some(tokio::spawn(run_asn_worker(asn, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_asn_worker(
+            asn,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -486,11 +519,13 @@ async fn run_batch_mode(
             GeoLookup::try_default()
         };
 
-        if let Some(geo) = geo_lookup {
-            Some(tokio::spawn(run_geo_worker(Arc::new(geo), sessions.clone(), cancel.clone())))
-        } else {
-            None
-        }
+        geo_lookup.map(|geo| {
+            tokio::spawn(run_geo_worker(
+                Arc::new(geo),
+                sessions.clone(),
+                cancel.clone(),
+            ))
+        })
     } else {
         None
     };
@@ -498,7 +533,11 @@ async fn run_batch_mode(
     // Spawn IX worker (if enabled)
     let ix_handle = if config.ix_enabled {
         match IxLookup::new() {
-            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(
+                Arc::new(ix),
+                sessions.clone(),
+                cancel.clone(),
+            ))),
             Err(e) => {
                 eprintln!("Warning: Failed to initialize IX lookup: {}", e);
                 None
@@ -521,7 +560,9 @@ async fn run_batch_mode(
     cancel.cancel();
 
     receiver_handle.join().map_err(|e| {
-        let msg = e.downcast_ref::<&str>().map(|s| s.to_string())
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
             .or_else(|| e.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".to_string());
         anyhow::anyhow!("Receiver thread failed: {}", msg)
@@ -548,14 +589,19 @@ async fn run_batch_mode(
         if let Some(state) = sessions_read.get(target_ip) {
             let session = state.read();
             if targets.len() > 1 && !args.json {
-                println!("\n=== Target {}/{}: {} ===\n", i + 1, targets.len(), target_ip);
+                println!(
+                    "\n=== Target {}/{}: {} ===\n",
+                    i + 1,
+                    targets.len(),
+                    target_ip
+                );
             }
             if args.json {
-                export_json(&*session, std::io::stdout())?;
+                export_json(&session, std::io::stdout())?;
             } else if args.report {
-                generate_report(&*session, std::io::stdout())?;
+                generate_report(&session, std::io::stdout())?;
             } else if args.csv {
-                export_csv(&*session, std::io::stdout())?;
+                export_csv(&session, std::io::stdout())?;
             }
         }
     }
@@ -613,7 +659,11 @@ async fn run_streaming_mode(
     // Spawn DNS worker (if enabled)
     let dns_handle = if config.dns_enabled {
         let dns = Arc::new(DnsLookup::new().await?);
-        Some(tokio::spawn(run_dns_worker(dns, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_dns_worker(
+            dns,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -621,7 +671,11 @@ async fn run_streaming_mode(
     // Spawn ASN worker (if enabled)
     let asn_handle = if config.asn_enabled {
         let asn = Arc::new(AsnLookup::new().await?);
-        Some(tokio::spawn(run_asn_worker(asn, sessions.clone(), cancel.clone())))
+        Some(tokio::spawn(run_asn_worker(
+            asn,
+            sessions.clone(),
+            cancel.clone(),
+        )))
     } else {
         None
     };
@@ -640,11 +694,13 @@ async fn run_streaming_mode(
             GeoLookup::try_default()
         };
 
-        if let Some(geo) = geo_lookup {
-            Some(tokio::spawn(run_geo_worker(Arc::new(geo), sessions.clone(), cancel.clone())))
-        } else {
-            None
-        }
+        geo_lookup.map(|geo| {
+            tokio::spawn(run_geo_worker(
+                Arc::new(geo),
+                sessions.clone(),
+                cancel.clone(),
+            ))
+        })
     } else {
         None
     };
@@ -652,7 +708,11 @@ async fn run_streaming_mode(
     // Spawn IX worker (if enabled)
     let ix_handle = if config.ix_enabled {
         match IxLookup::new() {
-            Ok(ix) => Some(tokio::spawn(run_ix_worker(Arc::new(ix), sessions.clone(), cancel.clone()))),
+            Ok(ix) => Some(tokio::spawn(run_ix_worker(
+                Arc::new(ix),
+                sessions.clone(),
+                cancel.clone(),
+            ))),
             Err(e) => {
                 eprintln!("Warning: Failed to initialize IX lookup: {}", e);
                 None
@@ -688,18 +748,18 @@ async fn run_streaming_mode(
                             }
                             // Print new results (with hostname if resolved)
                             for hop in &session.hops {
-                                if hop.received > 0 {
-                                    if let Some(stats) = hop.primary_stats() {
-                                        let host = stats.hostname.as_deref().unwrap_or("");
-                                        println!(
-                                            "TTL {:2}  {:15}  {:20}  {:>6.2}ms  {:>5.1}% loss",
-                                            hop.ttl,
-                                            stats.ip,
-                                            host,
-                                            stats.avg_rtt().as_secs_f64() * 1000.0,
-                                            hop.loss_pct()
-                                        );
-                                    }
+                                if hop.received > 0
+                                    && let Some(stats) = hop.primary_stats()
+                                {
+                                    let host = stats.hostname.as_deref().unwrap_or("");
+                                    println!(
+                                        "TTL {:2}  {:15}  {:20}  {:>6.2}ms  {:>5.1}% loss",
+                                        hop.ttl,
+                                        stats.ip,
+                                        host,
+                                        stats.avg_rtt().as_secs_f64() * 1000.0,
+                                        hop.loss_pct()
+                                    );
                                 }
                             }
                             println!("---");
@@ -715,7 +775,9 @@ async fn run_streaming_mode(
         handle.await??;
     }
     receiver_handle.join().map_err(|e| {
-        let msg = e.downcast_ref::<&str>().map(|s| s.to_string())
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
             .or_else(|| e.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".to_string());
         anyhow::anyhow!("Receiver thread failed: {}", msg)

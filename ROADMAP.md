@@ -100,9 +100,9 @@
 
 ### v0.8.0 - Probe Control & MTU
 - [ ] Source IP selection (`--source-ip 10.0.0.1`)
-- [ ] Packet size control (`--size 1400`)
+- [x] Packet size control (`--size 1400`)
 - [ ] Path MTU discovery mode (binary search for max unfragmented size)
-- [ ] DSCP/ToS marking (`--dscp 46`) for QoS policy testing
+- [x] DSCP/ToS marking (`--dscp 46`) for QoS policy testing
 - [ ] Flows per second control (`--rate`)
 - [ ] First-hop gateway detection (show which interface/gateway is used)
 
@@ -148,7 +148,7 @@
 - [ ] Hop privacy mode (mask sensitive IPs for screenshots/sharing)
 
 ### Infrastructure
-- [ ] GitHub Actions CI (build, test, clippy)
+- [x] GitHub Actions CI (build, test, clippy)
 - [ ] Binary releases (Linux, macOS)
 - [ ] Homebrew formula
 - [ ] AUR package

@@ -32,7 +32,12 @@ pub struct MainView<'a> {
 }
 
 impl<'a> MainView<'a> {
-    pub fn new(session: &'a Session, selected: Option<usize>, paused: bool, theme: &'a Theme) -> Self {
+    pub fn new(
+        session: &'a Session,
+        selected: Option<usize>,
+        paused: bool,
+        theme: &'a Theme,
+    ) -> Self {
         Self {
             session,
             selected,
@@ -57,10 +62,7 @@ impl Widget for MainView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Build title
         let target_str = if let Some(ref hostname) = self.session.target.hostname {
-            format!(
-                "{} ({})",
-                self.session.target.resolved, hostname
-            )
+            format!("{} ({})", self.session.target.resolved, hostname)
         } else {
             self.session.target.resolved.to_string()
         };
@@ -74,7 +76,10 @@ impl Widget for MainView<'_> {
 
         let status = if self.paused { " [PAUSED]" } else { "" };
         let nat_warn = if self.session.has_nat() { " [NAT]" } else { "" };
-        let has_rate_limit = self.session.hops.iter()
+        let has_rate_limit = self
+            .session
+            .hops
+            .iter()
             .any(|h| h.rate_limit.as_ref().map(|r| r.suspected).unwrap_or(false));
         let rl_warn = if has_rate_limit { " [RL?]" } else { "" };
         let probe_count = self.session.total_sent;
@@ -91,7 +96,14 @@ impl Widget for MainView<'_> {
 
         let title = format!(
             "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}",
-            target_indicator, target_str, iface_str, probe_count, interval_ms, status, nat_warn, rl_warn
+            target_indicator,
+            target_str,
+            iface_str,
+            probe_count,
+            interval_ms,
+            status,
+            nat_warn,
+            rl_warn
         );
 
         let block = Block::default()
@@ -174,25 +186,28 @@ impl Widget for MainView<'_> {
                     self.theme.success
                 };
 
-                let (avg, min, max, stddev, jitter) =
-                    if let Some(stats) = hop.primary_stats() {
-                        if stats.received > 0 {
-                            (
-                                format!("{:.1}", stats.avg_rtt().as_secs_f64() * 1000.0),
-                                format!("{:.1}", stats.min_rtt.as_secs_f64() * 1000.0),
-                                format!("{:.1}", stats.max_rtt.as_secs_f64() * 1000.0),
-                                format!("{:.1}", stats.stddev().as_secs_f64() * 1000.0),
-                                format!("{:.1}", stats.jitter().as_secs_f64() * 1000.0),
-                            )
-                        } else {
-                            ("-".into(), "-".into(), "-".into(), "-".into(), "-".into())
-                        }
+                let (avg, min, max, stddev, jitter) = if let Some(stats) = hop.primary_stats() {
+                    if stats.received > 0 {
+                        (
+                            format!("{:.1}", stats.avg_rtt().as_secs_f64() * 1000.0),
+                            format!("{:.1}", stats.min_rtt.as_secs_f64() * 1000.0),
+                            format!("{:.1}", stats.max_rtt.as_secs_f64() * 1000.0),
+                            format!("{:.1}", stats.stddev().as_secs_f64() * 1000.0),
+                            format!("{:.1}", stats.jitter().as_secs_f64() * 1000.0),
+                        )
                     } else {
                         ("-".into(), "-".into(), "-".into(), "-".into(), "-".into())
-                    };
+                    }
+                } else {
+                    ("-".into(), "-".into(), "-".into(), "-".into(), "-".into())
+                };
 
                 // Determine if rate limiting is suspected
-                let rate_limited = hop.rate_limit.as_ref().map(|r| r.suspected).unwrap_or(false);
+                let rate_limited = hop
+                    .rate_limit
+                    .as_ref()
+                    .map(|r| r.suspected)
+                    .unwrap_or(false);
 
                 let loss_style = if rate_limited {
                     // Rate limited: show in different color to indicate it's not real loss

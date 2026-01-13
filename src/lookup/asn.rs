@@ -1,6 +1,6 @@
 use anyhow::Result;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::state::AsnInfo;
-use crate::trace::SessionMap;
+use crate::trace::receiver::SessionMap;
 
 /// ASN cache entry
 struct CacheEntry {
@@ -26,7 +26,8 @@ pub struct AsnLookup {
 
 impl AsnLookup {
     pub async fn new() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
         Ok(Self {
             resolver,
@@ -40,10 +41,10 @@ impl AsnLookup {
         // Check cache first
         {
             let cache = self.cache.read();
-            if let Some(entry) = cache.get(&ip) {
-                if entry.cached_at.elapsed() < self.cache_ttl {
-                    return entry.asn.clone();
-                }
+            if let Some(entry) = cache.get(&ip)
+                && entry.cached_at.elapsed() < self.cache_ttl
+            {
+                return entry.asn.clone();
             }
         }
 

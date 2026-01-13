@@ -1,20 +1,24 @@
+use pnet::packet::MutablePacket;
 use pnet::packet::icmp::echo_request::MutableEchoRequestPacket;
 use pnet::packet::icmp::{IcmpCode, IcmpTypes, checksum};
-use pnet::packet::MutablePacket;
 
-/// ICMP Echo Request packet size
+/// ICMP header size (fixed)
 pub const ICMP_HEADER_SIZE: usize = 8;
-pub const ICMP_PAYLOAD_SIZE: usize = 56; // Standard ping payload
-pub const ICMP_PACKET_SIZE: usize = ICMP_HEADER_SIZE + ICMP_PAYLOAD_SIZE;
+/// Default payload size (standard ping)
+pub const DEFAULT_PAYLOAD_SIZE: usize = 56;
+/// Minimum payload size (just timestamp)
+pub const MIN_PAYLOAD_SIZE: usize = 8;
 
 /// Get process identifier for ICMP identification field
 pub fn get_identifier() -> u16 {
     std::process::id() as u16
 }
 
-/// Build an ICMP Echo Request packet
-pub fn build_echo_request(identifier: u16, sequence: u16) -> Vec<u8> {
-    let mut buffer = vec![0u8; ICMP_PACKET_SIZE];
+/// Build an ICMP Echo Request packet with configurable payload size
+pub fn build_echo_request(identifier: u16, sequence: u16, payload_size: usize) -> Vec<u8> {
+    let payload_size = payload_size.max(MIN_PAYLOAD_SIZE);
+    let packet_size = ICMP_HEADER_SIZE + payload_size;
+    let mut buffer = vec![0u8; packet_size];
 
     let mut packet = MutableEchoRequestPacket::new(&mut buffer).unwrap();
 
@@ -52,9 +56,20 @@ mod tests {
 
     #[test]
     fn test_build_echo_request() {
-        let packet = build_echo_request(1234, 5678);
-        assert_eq!(packet.len(), ICMP_PACKET_SIZE);
+        let packet = build_echo_request(1234, 5678, DEFAULT_PAYLOAD_SIZE);
+        assert_eq!(packet.len(), ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE);
         assert_eq!(packet[0], 8); // Echo Request type
         assert_eq!(packet[1], 0); // Code
+    }
+
+    #[test]
+    fn test_build_echo_request_custom_size() {
+        // Test larger payload
+        let packet = build_echo_request(1234, 5678, 1400);
+        assert_eq!(packet.len(), ICMP_HEADER_SIZE + 1400);
+
+        // Test minimum payload
+        let packet = build_echo_request(1234, 5678, 0);
+        assert_eq!(packet.len(), ICMP_HEADER_SIZE + MIN_PAYLOAD_SIZE);
     }
 }

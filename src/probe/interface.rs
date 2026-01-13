@@ -4,7 +4,7 @@
 //! - Linux: Uses SO_BINDTODEVICE via socket2::bind_device()
 //! - macOS: Uses IP_BOUND_IF via socket2::bind_device_by_index()
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use pnet::datalink;
 use socket2::Socket;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// which means the first segment is in the range 0xfe80-0xfebf.
 pub fn is_link_local_ipv6(addr: &Ipv6Addr) -> bool {
     let first_seg = addr.segments()[0];
-    first_seg >= 0xfe80 && first_seg <= 0xfebf
+    (0xfe80..=0xfebf).contains(&first_seg)
 }
 
 /// Validated interface information
@@ -24,6 +24,7 @@ pub struct InterfaceInfo {
     /// Interface name (e.g., "eth0", "wlan0")
     pub name: String,
     /// Interface index (used for macOS binding)
+    #[allow(dead_code)]
     pub index: u32,
     /// First IPv4 address on the interface (if any)
     pub ipv4: Option<Ipv4Addr>,
@@ -160,6 +161,7 @@ pub fn bind_socket_to_interface(socket: &Socket, info: &InterfaceInfo) -> Result
 /// Get the source IP address from an interface for a given IP family
 ///
 /// Returns the first address of the requested family, or an error if none exists.
+#[allow(dead_code)]
 pub fn get_interface_source_ip(info: &InterfaceInfo, ipv6: bool) -> Result<IpAddr> {
     if ipv6 {
         info.ipv6.map(IpAddr::V6).ok_or_else(|| {

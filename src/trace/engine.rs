@@ -7,13 +7,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{Config, ProbeProtocol};
 use crate::probe::{
-    build_echo_request, build_tcp_syn, build_udp_payload,
-    create_send_socket_with_interface,
-    create_tcp_socket_with_interface, create_udp_dgram_socket,
-    create_udp_dgram_socket_bound_with_interface,
-    get_identifier, get_local_addr_with_interface,
-    send_icmp, send_tcp_probe, send_udp_probe, set_ttl,
-    InterfaceInfo,
+    DEFAULT_PAYLOAD_SIZE, ICMP_HEADER_SIZE, InterfaceInfo, build_echo_request, build_tcp_syn,
+    build_udp_payload, create_send_socket_with_interface, create_tcp_socket_with_interface,
+    create_udp_dgram_socket, create_udp_dgram_socket_bound_with_interface, get_identifier,
+    get_local_addr_with_interface, send_icmp, send_tcp_probe, send_udp_probe, set_dscp, set_ttl,
 };
 use crate::state::{ProbeId, Session};
 use crate::trace::pending::{PendingMap, PendingProbe};
@@ -123,12 +120,12 @@ impl ProbeEngine {
                     }
 
                     // Check probe count limit
-                    if let Some(count) = self.config.count {
-                        if total_sent >= count * self.config.max_ttl as u64 {
-                            // Signal completion
-                            self.cancel.cancel();
-                            break;
-                        }
+                    if let Some(count) = self.config.count
+                        && total_sent >= count * self.config.max_ttl as u64
+                    {
+                        // Signal completion
+                        self.cancel.cancel();
+                        break;
                     }
 
                     // Determine max TTL to probe (stop at destination if known)
@@ -150,12 +147,24 @@ impl ProbeEngine {
                         }
 
                         let probe_id = ProbeId::new(ttl, seq);
-                        let packet = build_echo_request(self.identifier, probe_id.to_sequence());
+
+                        // Calculate payload size from config (packet_size includes IP+ICMP headers)
+                        let payload_size = self.config.packet_size
+                            .map(|s| (s as usize).saturating_sub(20 + ICMP_HEADER_SIZE))
+                            .unwrap_or(DEFAULT_PAYLOAD_SIZE);
+                        let packet = build_echo_request(self.identifier, probe_id.to_sequence(), payload_size);
 
                         // Set TTL before sending
                         if let Err(e) = set_ttl(&socket, ttl) {
                             eprintln!("Failed to set TTL {}: {}", ttl, e);
                             continue;
+                        }
+
+                        // Set DSCP if configured
+                        if let Some(dscp) = self.config.dscp
+                            && let Err(e) = set_dscp(&socket, dscp, self.target.is_ipv6())
+                        {
+                            eprintln!("Failed to set DSCP {}: {}", dscp, e);
                         }
 
                         let sent_at = Instant::now();

@@ -14,6 +14,7 @@ use crate::state::ProbeId;
 pub const IPPROTO_TCP: u8 = 6;
 
 /// Default source port for TCP probes (high ephemeral port)
+#[allow(dead_code)]
 const TCP_SRC_PORT: u16 = 50000;
 
 /// TCP flags
@@ -140,12 +141,7 @@ pub fn create_tcp_socket(ipv6: bool) -> Result<Socket> {
 }
 
 /// Send a TCP SYN probe to target
-pub fn send_tcp_probe(
-    socket: &Socket,
-    packet: &[u8],
-    target: IpAddr,
-    port: u16,
-) -> Result<usize> {
+pub fn send_tcp_probe(socket: &Socket, packet: &[u8], target: IpAddr, port: u16) -> Result<usize> {
     let addr = SocketAddr::new(target, port);
     let sock_addr = SockAddr::from(addr);
     let sent = socket.send_to(packet, &sock_addr)?;
@@ -182,12 +178,11 @@ pub fn get_local_addr(target: IpAddr) -> IpAddr {
 
     let target_addr = std::net::SocketAddr::new(target, 80);
 
-    if let Ok(socket) = UdpSocket::bind(bind_addr) {
-        if socket.connect(target_addr).is_ok() {
-            if let Ok(local_addr) = socket.local_addr() {
-                return local_addr.ip();
-            }
-        }
+    if let Ok(socket) = UdpSocket::bind(bind_addr)
+        && socket.connect(target_addr).is_ok()
+        && let Ok(local_addr) = socket.local_addr()
+    {
+        return local_addr.ip();
     }
 
     // Fallback to unspecified if lookup fails
@@ -197,7 +192,7 @@ pub fn get_local_addr(target: IpAddr) -> IpAddr {
     }
 }
 
-use crate::probe::interface::{bind_socket_to_interface, InterfaceInfo};
+use crate::probe::interface::{InterfaceInfo, bind_socket_to_interface};
 
 /// Get source IP address for checksum calculation, using interface IP if specified
 ///

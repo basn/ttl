@@ -1,6 +1,6 @@
-use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use crate::cli::Args;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Probe protocol type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -52,10 +52,20 @@ pub struct Config {
     /// Don't bind receiver to interface (for asymmetric routing)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recv_any: bool,
+    /// DSCP value for QoS testing (0-63)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dscp: Option<u8>,
+    /// Probe packet size in bytes (includes IP+ICMP headers)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packet_size: Option<u16>,
 }
 
-fn default_flows() -> u8 { 1 }
-fn default_src_port() -> u16 { 50000 }
+fn default_flows() -> u8 {
+    1
+}
+fn default_src_port() -> u16 {
+    50000
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -75,6 +85,8 @@ impl Default for Config {
             ix_enabled: true,
             interface: None,
             recv_any: false,
+            dscp: None,
+            packet_size: None,
         }
     }
 }
@@ -96,7 +108,11 @@ impl From<&Args> for Config {
         });
 
         Self {
-            count: if args.count == 0 { None } else { Some(args.count) },
+            count: if args.count == 0 {
+                None
+            } else {
+                Some(args.count)
+            },
             interval: args.interval_duration(),
             max_ttl: args.max_ttl,
             timeout: args.timeout_duration(),
@@ -111,6 +127,8 @@ impl From<&Args> for Config {
             ix_enabled: !args.no_ix,
             interface: args.interface.clone(),
             recv_any: args.recv_any,
+            dscp: args.dscp,
+            packet_size: args.size,
         }
     }
 }

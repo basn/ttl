@@ -1,4 +1,4 @@
-use maxminddb::{geoip2, Reader};
+use maxminddb::{Reader, geoip2};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::state::GeoInfo;
-use crate::trace::SessionMap;
+use crate::trace::receiver::SessionMap;
 
 /// GeoIP cache entry
 struct CacheEntry {
@@ -46,15 +46,19 @@ impl GeoLookup {
             // Current directory
             Some(std::path::PathBuf::from("GeoLite2-City.mmdb")),
             // System locations
-            Some(std::path::PathBuf::from("/usr/share/GeoIP/GeoLite2-City.mmdb")),
-            Some(std::path::PathBuf::from("/var/lib/GeoIP/GeoLite2-City.mmdb")),
+            Some(std::path::PathBuf::from(
+                "/usr/share/GeoIP/GeoLite2-City.mmdb",
+            )),
+            Some(std::path::PathBuf::from(
+                "/var/lib/GeoIP/GeoLite2-City.mmdb",
+            )),
         ];
 
         for path in paths.into_iter().flatten() {
-            if path.exists() {
-                if let Ok(lookup) = Self::new(&path) {
-                    return Some(lookup);
-                }
+            if path.exists()
+                && let Ok(lookup) = Self::new(&path)
+            {
+                return Some(lookup);
             }
         }
 
@@ -66,10 +70,10 @@ impl GeoLookup {
         // Check cache first
         {
             let cache = self.cache.read();
-            if let Some(entry) = cache.get(&ip) {
-                if entry.cached_at.elapsed() < self.cache_ttl {
-                    return entry.geo.clone();
-                }
+            if let Some(entry) = cache.get(&ip)
+                && entry.cached_at.elapsed() < self.cache_ttl
+            {
+                return entry.geo.clone();
             }
         }
 

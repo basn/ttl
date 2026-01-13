@@ -23,6 +23,8 @@ Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment.
 - **NAT detection**: Identify when NAT devices rewrite source ports
 - **ICMP rate limit detection**: Identify misleading loss from router rate limiting
 - **Interface binding**: Force probes through specific network interface
+- **Packet size control**: Set probe size for MTU testing (`--size`)
+- **DSCP/ToS marking**: Set QoS marking for policy testing (`--dscp`)
 - Great terminal UX built with ratatui
 - Scriptable mode for CI and automation
 - Reverse DNS resolution (parallel lookups)
@@ -169,6 +171,23 @@ The `--interface` flag ensures probes egress through the specified network inter
 
 The `--recv-any` flag (requires `--interface`) disables receiver socket binding. Use this when replies may arrive on a different interface than the one used for sending (asymmetric routing, VPN split-tunnel).
 
+### Packet size and DSCP marking
+
+```bash
+# Large packets for MTU testing (1400 bytes total)
+ttl --size 1400 8.8.8.8
+
+# DSCP marking for QoS policy testing
+ttl --dscp 46 8.8.8.8    # EF (Expedited Forwarding) for VoIP
+ttl --dscp 34 8.8.8.8    # AF41 for video
+ttl --dscp 0 8.8.8.8     # Best effort (default)
+
+# Combine both
+ttl --dscp 46 --size 1400 8.8.8.8
+```
+
+DSCP values are set in the IP header TOS field. You can use tcpdump to verify: `sudo tcpdump -v -n icmp | grep tos`
+
 ### Options
 
 ```
@@ -181,6 +200,8 @@ The `--recv-any` flag (requires `--interface`) disables receiver socket binding.
 --flows <N>          Number of flows for ECMP detection (1-16, default: 1)
 --src-port <N>       Base source port for multi-flow (default: 50000)
 --timeout <S>        Probe timeout in seconds (default: 3)
+--size <N>           Packet size in bytes (64-1500, for MTU testing)
+--dscp <N>           DSCP value for QoS testing (0-63)
 --interface <NAME>   Bind probes to specific network interface
 --recv-any           Don't bind receiver to interface (asymmetric routing)
 -4, --ipv4           Force IPv4

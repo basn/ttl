@@ -211,9 +211,12 @@ fn parse_icmp_response_v4(
                 src_port: None,    // ICMP has no source port
             })
         }
-        IcmpTypes::TimeExceeded => {
-            parse_icmp_error_payload_v4(icmp_data, responder, our_identifier, IcmpResponseType::TimeExceeded)
-        }
+        IcmpTypes::TimeExceeded => parse_icmp_error_payload_v4(
+            icmp_data,
+            responder,
+            our_identifier,
+            IcmpResponseType::TimeExceeded,
+        ),
         IcmpTypes::DestinationUnreachable => {
             let code = icmp_packet.get_icmp_code().0;
             parse_icmp_error_payload_v4(
@@ -328,17 +331,18 @@ fn parse_icmp_response_v6(
                 src_port: None,    // ICMP has no source port
             })
         }
-        ICMPV6_TIME_EXCEEDED => {
-            parse_icmp_error_payload_v6(icmp_data, responder, our_identifier, IcmpResponseType::TimeExceeded)
-        }
-        ICMPV6_DEST_UNREACHABLE => {
-            parse_icmp_error_payload_v6(
-                icmp_data,
-                responder,
-                our_identifier,
-                IcmpResponseType::DestUnreachable(icmp_code),
-            )
-        }
+        ICMPV6_TIME_EXCEEDED => parse_icmp_error_payload_v6(
+            icmp_data,
+            responder,
+            our_identifier,
+            IcmpResponseType::TimeExceeded,
+        ),
+        ICMPV6_DEST_UNREACHABLE => parse_icmp_error_payload_v6(
+            icmp_data,
+            responder,
+            our_identifier,
+            IcmpResponseType::DestUnreachable(icmp_code),
+        ),
         _ => None,
     }
 }
@@ -663,11 +667,11 @@ mod tests {
 
         // IPv4 header
         packet[0] = 0x45; // Version 4, IHL 5
-        packet[9] = 1;    // Protocol: ICMP
+        packet[9] = 1; // Protocol: ICMP
 
         // ICMP Echo Reply
-        packet[20] = 0;   // Type: Echo Reply
-        packet[21] = 0;   // Code: 0
+        packet[20] = 0; // Type: Echo Reply
+        packet[21] = 0; // Code: 0
         // Identifier: 0x5678 (wrong - we're looking for 0x1234)
         packet[24] = 0x56;
         packet[25] = 0x78;
@@ -688,11 +692,11 @@ mod tests {
 
         // IPv4 header
         packet[0] = 0x45; // Version 4, IHL 5 (20 bytes)
-        packet[9] = 1;    // Protocol: ICMP
+        packet[9] = 1; // Protocol: ICMP
 
         // ICMP Echo Reply
-        packet[20] = 0;   // Type: Echo Reply
-        packet[21] = 0;   // Code: 0
+        packet[20] = 0; // Type: Echo Reply
+        packet[21] = 0; // Code: 0
         // Identifier
         packet[24] = 0x12;
         packet[25] = 0x34;
@@ -729,16 +733,16 @@ mod tests {
         packet[9] = 1; // ICMP
 
         // ICMP Time Exceeded
-        packet[20] = 11;  // Type: Time Exceeded
-        packet[21] = 0;   // Code: TTL exceeded
+        packet[20] = 11; // Type: Time Exceeded
+        packet[21] = 0; // Code: TTL exceeded
 
         // Original IP header (inside ICMP payload at offset 28)
         packet[28] = 0x45; // Version 4, IHL 5
-        packet[37] = 1;    // Protocol: ICMP
+        packet[37] = 1; // Protocol: ICMP
 
         // Original ICMP Echo Request (at offset 48)
-        packet[48] = 8;    // Type: Echo Request
-        packet[49] = 0;    // Code: 0
+        packet[48] = 8; // Type: Echo Request
+        packet[49] = 0; // Code: 0
         // Identifier
         packet[52] = 0xAB;
         packet[53] = 0xCD;
@@ -767,11 +771,11 @@ mod tests {
 
         // IPv4 header with IHL=6
         packet[0] = 0x46; // Version 4, IHL 6 (24 bytes)
-        packet[9] = 1;    // Protocol: ICMP
+        packet[9] = 1; // Protocol: ICMP
 
         // ICMP Echo Reply at offset 24
-        packet[24] = 0;   // Type: Echo Reply
-        packet[25] = 0;   // Code: 0
+        packet[24] = 0; // Type: Echo Reply
+        packet[25] = 0; // Code: 0
         // Identifier
         packet[28] = 0x12;
         packet[29] = 0x34;
@@ -794,7 +798,9 @@ mod tests {
 
     #[test]
     fn test_parse_echo_reply_v6() {
-        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(
+            0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888,
+        ));
         let our_id = 0x1234;
 
         // Build IPv6 + ICMPv6 Echo Reply packet
@@ -803,11 +809,11 @@ mod tests {
 
         // IPv6 header
         packet[0] = 0x60; // Version 6
-        packet[6] = 58;   // Next Header: ICMPv6
+        packet[6] = 58; // Next Header: ICMPv6
 
         // ICMPv6 Echo Reply at offset 40
         packet[40] = 129; // Type: Echo Reply
-        packet[41] = 0;   // Code: 0
+        packet[41] = 0; // Code: 0
         // Checksum (skipped for ICMPv6 - kernel validates)
         // Identifier
         packet[44] = 0x12;
@@ -842,16 +848,16 @@ mod tests {
         packet[6] = 58; // ICMPv6
 
         // ICMPv6 Time Exceeded at offset 40
-        packet[40] = 3;   // Type: Time Exceeded
-        packet[41] = 0;   // Code: Hop limit exceeded
+        packet[40] = 3; // Type: Time Exceeded
+        packet[41] = 0; // Code: Hop limit exceeded
 
         // Original IPv6 header (inside ICMPv6 payload at offset 48)
         packet[48] = 0x60; // Version 6
-        packet[54] = 58;   // Next Header: ICMPv6
+        packet[54] = 58; // Next Header: ICMPv6
 
         // Original ICMPv6 Echo Request (at offset 88)
-        packet[88] = 128;  // Type: Echo Request
-        packet[89] = 0;    // Code: 0
+        packet[88] = 128; // Type: Echo Request
+        packet[89] = 0; // Code: 0
         // Identifier
         packet[92] = 0xAB;
         packet[93] = 0xCD;
@@ -872,7 +878,9 @@ mod tests {
 
     #[test]
     fn test_ipv6_with_hop_by_hop_extension() {
-        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(
+            0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888,
+        ));
         let our_id = 0x1234;
 
         // Build IPv6 + Hop-by-Hop Options (8 bytes) + ICMPv6 Echo Reply
@@ -881,16 +889,16 @@ mod tests {
 
         // IPv6 header
         packet[0] = 0x60; // Version 6
-        packet[6] = 0;    // Next Header: Hop-by-Hop Options
+        packet[6] = 0; // Next Header: Hop-by-Hop Options
 
         // Hop-by-Hop Options header at offset 40
-        packet[40] = 58;  // Next Header: ICMPv6
-        packet[41] = 0;   // Length: 0 (means 8 bytes total)
+        packet[40] = 58; // Next Header: ICMPv6
+        packet[41] = 0; // Length: 0 (means 8 bytes total)
         // Padding bytes 42-47
 
         // ICMPv6 Echo Reply at offset 48
         packet[48] = 129; // Type: Echo Reply
-        packet[49] = 0;   // Code: 0
+        packet[49] = 0; // Code: 0
         // Identifier
         packet[52] = 0x12;
         packet[53] = 0x34;
@@ -910,7 +918,9 @@ mod tests {
 
     #[test]
     fn test_ipv6_with_routing_extension() {
-        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(
+            0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888,
+        ));
         let our_id = 0x5678;
 
         // Build IPv6 + Routing Header (8 bytes) + ICMPv6 Echo Reply
@@ -918,13 +928,13 @@ mod tests {
 
         // IPv6 header
         packet[0] = 0x60;
-        packet[6] = 43;   // Next Header: Routing
+        packet[6] = 43; // Next Header: Routing
 
         // Routing header at offset 40
-        packet[40] = 58;  // Next Header: ICMPv6
-        packet[41] = 0;   // Length: 0 (8 bytes total)
-        packet[42] = 0;   // Routing Type
-        packet[43] = 0;   // Segments Left
+        packet[40] = 58; // Next Header: ICMPv6
+        packet[41] = 0; // Length: 0 (8 bytes total)
+        packet[42] = 0; // Routing Type
+        packet[43] = 0; // Segments Left
 
         // ICMPv6 Echo Reply at offset 48
         packet[48] = 129;
@@ -946,7 +956,9 @@ mod tests {
 
     #[test]
     fn test_ipv6_fragment_header_rejected() {
-        let responder = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888));
+        let responder = IpAddr::V6(std::net::Ipv6Addr::new(
+            0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888,
+        ));
         let our_id = 0x1234;
 
         // Build IPv6 with Fragment header - should be rejected
@@ -954,10 +966,10 @@ mod tests {
 
         // IPv6 header
         packet[0] = 0x60;
-        packet[6] = 44;   // Next Header: Fragment
+        packet[6] = 44; // Next Header: Fragment
 
         // Fragment header at offset 40
-        packet[40] = 58;  // Next Header: ICMPv6
+        packet[40] = 58; // Next Header: ICMPv6
         // Fragment header is 8 bytes
 
         // ICMPv6 at offset 48
@@ -983,8 +995,8 @@ mod tests {
         packet[9] = 1; // ICMP
 
         // ICMP Echo Reply with bad checksum
-        packet[20] = 0;   // Type: Echo Reply
-        packet[21] = 0;   // Code: 0
+        packet[20] = 0; // Type: Echo Reply
+        packet[21] = 0; // Code: 0
         packet[22] = 0xFF; // Invalid checksum
         packet[23] = 0xFF;
         packet[24] = 0x12;
@@ -1012,15 +1024,15 @@ mod tests {
         packet[9] = 1;
 
         // ICMP Destination Unreachable
-        packet[20] = 3;   // Type: Destination Unreachable
-        packet[21] = 1;   // Code: Host Unreachable
+        packet[20] = 3; // Type: Destination Unreachable
+        packet[21] = 1; // Code: Host Unreachable
 
         // Original IP header at offset 28
         packet[28] = 0x45;
         packet[37] = 1;
 
         // Original ICMP at offset 48
-        packet[48] = 8;   // Echo Request
+        packet[48] = 8; // Echo Request
         packet[52] = 0xDE;
         packet[53] = 0xAD;
         let probe_id = ProbeId::new(12, 3);
@@ -1034,7 +1046,10 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.probe_id.ttl, 12);
         assert_eq!(parsed.probe_id.seq, 3);
-        assert!(matches!(parsed.response_type, IcmpResponseType::DestUnreachable(1)));
+        assert!(matches!(
+            parsed.response_type,
+            IcmpResponseType::DestUnreachable(1)
+        ));
     }
 
     #[test]
@@ -1116,16 +1131,16 @@ mod tests {
         packet[9] = 1; // ICMP
 
         // ICMP Time Exceeded
-        packet[20] = 11;  // Type: Time Exceeded
-        packet[21] = 0;   // Code: TTL exceeded
+        packet[20] = 11; // Type: Time Exceeded
+        packet[21] = 0; // Code: TTL exceeded
 
         // Original IP header (at offset 28)
         packet[28] = 0x45;
-        packet[37] = 1;   // Protocol: ICMP
+        packet[37] = 1; // Protocol: ICMP
 
         // Original ICMP Echo Request (at offset 48)
-        packet[48] = 8;    // Type: Echo Request
-        packet[49] = 0;    // Code: 0
+        packet[48] = 8; // Type: Echo Request
+        packet[49] = 0; // Code: 0
         packet[52] = 0x12; // Identifier
         packet[53] = 0x34;
         let probe_id = ProbeId::new(5, 1);
@@ -1186,16 +1201,16 @@ mod tests {
         packet[9] = 1; // ICMP
 
         // ICMP Time Exceeded with RFC 4884 length field
-        packet[20] = 11;  // Type: Time Exceeded
-        packet[21] = 0;   // Code: TTL exceeded
-        packet[25] = 12;  // Length = 12 (48 bytes of original datagram)
+        packet[20] = 11; // Type: Time Exceeded
+        packet[21] = 0; // Code: TTL exceeded
+        packet[25] = 12; // Length = 12 (48 bytes of original datagram)
 
         // Original IP header (at offset 28)
         packet[28] = 0x45;
-        packet[37] = 1;   // Protocol: ICMP
+        packet[37] = 1; // Protocol: ICMP
 
         // Original ICMP Echo Request (at offset 48)
-        packet[48] = 8;    // Type: Echo Request
+        packet[48] = 8; // Type: Echo Request
         packet[52] = 0x12; // Identifier
         packet[53] = 0x34;
         let probe_id = ProbeId::new(3, 2);

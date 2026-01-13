@@ -19,7 +19,7 @@ impl ProbeId {
     }
 
     /// Encode TTL and sequence into a 16-bit value for ICMP sequence field
-    pub fn to_sequence(&self) -> u16 {
+    pub fn to_sequence(self) -> u16 {
         ((self.ttl as u16) << 8) | (self.seq as u16)
     }
 
@@ -341,6 +341,7 @@ pub struct FlowPathStats {
 }
 
 impl FlowPathStats {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -370,6 +371,7 @@ impl FlowPathStats {
     }
 
     /// Loss percentage for this flow (based on completed probes only)
+    #[allow(dead_code)]
     pub fn loss_pct(&self) -> f64 {
         let completed = self.received + self.timeouts;
         if completed == 0 {
@@ -500,6 +502,7 @@ impl Hop {
     }
 
     /// Record a response from a responder
+    #[allow(dead_code)]
     pub fn record_response(&mut self, ip: IpAddr, rtt: Duration) {
         self.record_response_with_mpls(ip, rtt, None);
     }
@@ -580,10 +583,7 @@ impl Hop {
 
     /// Record a probe was sent on a specific flow
     pub fn record_flow_sent(&mut self, flow_id: u8) {
-        self.flow_paths
-            .entry(flow_id)
-            .or_insert_with(FlowPathStats::new)
-            .record_sent();
+        self.flow_paths.entry(flow_id).or_default().record_sent();
     }
 
     /// Record a response from a responder on a specific flow
@@ -591,7 +591,7 @@ impl Hop {
         // Update flow-specific stats
         self.flow_paths
             .entry(flow_id)
-            .or_insert_with(FlowPathStats::new)
+            .or_default()
             .record_response(responder);
 
         // Also update aggregate stats (existing behavior)
@@ -602,10 +602,7 @@ impl Hop {
 
     /// Record a timeout on a specific flow
     pub fn record_flow_timeout(&mut self, flow_id: u8) {
-        self.flow_paths
-            .entry(flow_id)
-            .or_insert_with(FlowPathStats::new)
-            .record_timeout();
+        self.flow_paths.entry(flow_id).or_default().record_timeout();
     }
 
     /// Check if ECMP is detected (multiple unique primary responders across flows)
@@ -643,7 +640,9 @@ impl Hop {
             .values()
             .filter_map(|fp| fp.primary_responder)
             .collect();
-        unique_responders.len().max(if self.primary.is_some() { 1 } else { 0 })
+        unique_responders
+            .len()
+            .max(if self.primary.is_some() { 1 } else { 0 })
     }
 
     /// Record a NAT detection result for this hop
@@ -698,11 +697,11 @@ pub struct Session {
     pub started_at: DateTime<Utc>,
     pub hops: Vec<Hop>,
     pub config: Config,
-    pub complete: bool,      // destination reached?
+    pub complete: bool,       // destination reached?
     pub dest_ttl: Option<u8>, // TTL at which destination was reached (actual hop count)
-    pub total_sent: u64,     // total probes sent across all hops
+    pub total_sent: u64,      // total probes sent across all hops
     #[serde(skip)]
-    pub paused: bool,        // pause probing (TUI only)
+    pub paused: bool, // pause probing (TUI only)
 }
 
 impl Session {
@@ -781,6 +780,7 @@ impl Session {
     }
 
     /// Get the first hop where NAT is detected (likely the local NAT device)
+    #[allow(dead_code)]
     pub fn first_nat_hop(&self) -> Option<u8> {
         self.hops.iter().find(|h| h.has_nat()).map(|h| h.ttl)
     }
@@ -998,7 +998,10 @@ mod tests {
 
     #[test]
     fn test_session_hop_access() {
-        let target = Target::new("example.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(93, 184, 216, 34)));
+        let target = Target::new(
+            "example.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(93, 184, 216, 34)),
+        );
         let config = Config::default();
         let session = Session::new(target, config);
 
@@ -1017,7 +1020,10 @@ mod tests {
 
     #[test]
     fn test_session_serialization_roundtrip() {
-        let target = Target::new("test.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)));
+        let target = Target::new(
+            "test.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)),
+        );
         let config = Config::default();
         let mut session = Session::new(target, config);
 
@@ -1043,7 +1049,10 @@ mod tests {
 
     #[test]
     fn test_session_reset_stats() {
-        let target = Target::new("test.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)));
+        let target = Target::new(
+            "test.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)),
+        );
         let config = Config::default();
         let mut session = Session::new(target, config);
 
@@ -1079,7 +1088,10 @@ mod tests {
         assert_eq!(session.hop(1).unwrap().sent, 0);
         assert_eq!(session.hop(1).unwrap().received, 0);
         assert!(session.hop(1).unwrap().responders.is_empty());
-        assert!(session.hop(1).unwrap().rate_limit.is_none(), "rate_limit should be cleared on reset");
+        assert!(
+            session.hop(1).unwrap().rate_limit.is_none(),
+            "rate_limit should be cleared on reset"
+        );
     }
 
     #[test]
@@ -1286,14 +1298,21 @@ mod tests {
 
     #[test]
     fn test_session_reset_clears_flow_paths() {
-        let target = Target::new("test.com".to_string(), IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)));
+        let target = Target::new(
+            "test.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)),
+        );
         let config = Config::default();
         let mut session = Session::new(target, config);
 
         // Add flow data
         if let Some(hop) = session.hop_mut(1) {
             hop.record_flow_sent(0);
-            hop.record_flow_response(0, IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)), Duration::from_millis(5));
+            hop.record_flow_response(
+                0,
+                IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1)),
+                Duration::from_millis(5),
+            );
         }
 
         assert!(!session.hop(1).unwrap().flow_paths.is_empty());

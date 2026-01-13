@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::state::ProbeId;
 
 /// UDP protocol number for IPv4/IPv6
+#[allow(dead_code)]
 pub const IPPROTO_UDP: u8 = 17;
 
 /// Build a UDP probe payload
@@ -29,6 +30,7 @@ pub fn build_udp_payload(probe_id: ProbeId) -> Vec<u8> {
 }
 
 /// Create a raw UDP socket for sending probes
+#[allow(dead_code)]
 pub fn create_udp_send_socket(ipv6: bool) -> Result<Socket> {
     let domain = if ipv6 { Domain::IPV6 } else { Domain::IPV4 };
 
@@ -54,6 +56,7 @@ pub fn create_udp_dgram_socket(ipv6: bool) -> Result<Socket> {
 }
 
 /// Create a DGRAM UDP socket bound to a specific source port (for multi-flow Paris traceroute)
+#[allow(dead_code)]
 pub fn create_udp_dgram_socket_bound(ipv6: bool, src_port: u16) -> Result<Socket> {
     let socket = create_udp_dgram_socket(ipv6)?;
 
@@ -68,7 +71,7 @@ pub fn create_udp_dgram_socket_bound(ipv6: bool, src_port: u16) -> Result<Socket
     Ok(socket)
 }
 
-use crate::probe::interface::{bind_socket_to_interface, InterfaceInfo};
+use crate::probe::interface::{InterfaceInfo, bind_socket_to_interface};
 
 /// Create a DGRAM UDP socket bound to source port and optionally to an interface
 /// Interface binding must happen BEFORE address binding for proper behavior
@@ -106,6 +109,7 @@ pub fn send_udp_probe(socket: &Socket, payload: &[u8], target: IpAddr, port: u16
 
 /// Receive ICMP response (for UDP probes, responses come as ICMP errors)
 /// This is the same as recv_icmp - we listen on a separate raw ICMP socket
+#[allow(dead_code)]
 pub fn recv_icmp_for_udp(socket: &Socket, buffer: &mut [u8]) -> Result<(usize, IpAddr)> {
     let uninit_buf: &mut [MaybeUninit<u8>] = unsafe {
         std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut MaybeUninit<u8>, buffer.len())
