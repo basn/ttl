@@ -425,9 +425,10 @@ impl ProbeEngine {
         let base_port = self.config.port.unwrap_or(80);
 
         // Source IP for checksum calculation (use explicit source_ip, or interface IP, or kernel default)
-        let src_ip = self.config.source_ip.unwrap_or_else(|| {
-            get_local_addr_with_interface(self.target, self.interface.as_ref())
-        });
+        let src_ip = self
+            .config
+            .source_ip
+            .unwrap_or_else(|| get_local_addr_with_interface(self.target, self.interface.as_ref()));
 
         let mut seq: u8 = 0;
         let mut total_sent: u64 = 0;
@@ -684,10 +685,7 @@ impl ProbeEngine {
                     return false;
                 }
 
-                eprintln!(
-                    "PMTUD: Failed to send probe size {}: {}",
-                    packet_size, e
-                );
+                eprintln!("PMTUD: Failed to send probe size {}: {}", packet_size, e);
                 false
             }
         }

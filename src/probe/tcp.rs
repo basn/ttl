@@ -36,7 +36,14 @@ pub fn build_tcp_syn(
     src_ip: IpAddr,
     dst_ip: IpAddr,
 ) -> Vec<u8> {
-    build_tcp_syn_sized(probe_id, src_port, dst_port, src_ip, dst_ip, DEFAULT_TCP_PAYLOAD)
+    build_tcp_syn_sized(
+        probe_id,
+        src_port,
+        dst_port,
+        src_ip,
+        dst_ip,
+        DEFAULT_TCP_PAYLOAD,
+    )
 }
 
 /// Build a TCP SYN packet with optional payload for MTU testing

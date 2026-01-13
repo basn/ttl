@@ -350,7 +350,8 @@ fn parse_icmp_response_v6(
             // ICMPv6 Packet Too Big (Type 2) - for PMTUD
             // MTU is in bytes 4-7 (32-bit field)
             let mtu = if icmp_data.len() >= 8 {
-                let mtu_val = u32::from_be_bytes([icmp_data[4], icmp_data[5], icmp_data[6], icmp_data[7]]);
+                let mtu_val =
+                    u32::from_be_bytes([icmp_data[4], icmp_data[5], icmp_data[6], icmp_data[7]]);
                 if mtu_val > 0 && mtu_val <= 65535 {
                     Some(mtu_val as u16)
                 } else {
