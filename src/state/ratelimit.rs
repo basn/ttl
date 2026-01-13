@@ -21,21 +21,38 @@ use crate::trace::SessionMap;
 pub fn analyze_rate_limiting(session: &mut Session) {
     let hop_count = session.hops.len();
 
-    // Collect detection results first to avoid borrow issues
-    let results: Vec<(u8, Option<RateLimitInfo>)> = (1..=hop_count as u8)
-        .map(|ttl| (ttl, detect_rate_limiting(session, ttl)))
+    // Collect detection results and downstream loss first to avoid borrow issues
+    let results: Vec<(u8, Option<RateLimitInfo>, Option<f64>)> = (1..=hop_count as u8)
+        .map(|ttl| {
+            let downstream = find_next_responding_hop_loss(session, ttl);
+            (ttl, detect_rate_limiting(session, ttl), downstream)
+        })
         .collect();
 
-    // Apply results
-    for (ttl, info) in results {
+    // Apply results with hysteresis for clearing
+    for (ttl, info, downstream_loss) in results {
         if let Some(hop) = session.hop_mut(ttl) {
-            if info.is_some() {
-                hop.rate_limit = info;
+            if let Some(new_info) = info {
+                // Detection matched: reset negative checks and update info
+                hop.rate_limit = Some(new_info);
             } else if hop.rate_limit.is_some() {
-                // Clear previous detection if no longer detected
-                // (loss may have decreased)
+                // Heuristics didn't match - increment negative check counter
+                // Calculate values before mutable borrow
                 let completed = hop.received + hop.timeouts;
-                if completed > 20 && hop.loss_pct() < 5.0 {
+                let hop_loss = hop.loss_pct();
+                let downstream_high = downstream_loss.map(|dl| dl >= 10.0).unwrap_or(false);
+
+                let existing = hop.rate_limit.as_mut().unwrap();
+                existing.negative_checks = existing.negative_checks.saturating_add(1);
+
+                // Clear after 2 consecutive negative checks AND either:
+                // - loss dropped below 5%, OR
+                // - downstream loss rose above 10% (isolated loss no longer applies)
+                let should_clear = existing.negative_checks >= 2
+                    && completed > 20
+                    && (hop_loss < 5.0 || downstream_high);
+
+                if should_clear {
                     hop.rate_limit = None;
                 }
             }
@@ -74,6 +91,7 @@ fn detect_rate_limiting(session: &Session, ttl: u8) -> Option<RateLimitInfo> {
                 )),
                 hop_loss,
                 downstream_loss: Some(dl),
+                negative_checks: 0,
             });
         }
     }
@@ -88,6 +106,7 @@ fn detect_rate_limiting(session: &Session, ttl: u8) -> Option<RateLimitInfo> {
                 reason: Some("All flows showing equal loss (rate limit, not path issue)".into()),
                 hop_loss,
                 downstream_loss,
+                negative_checks: 0,
             });
         }
     }
@@ -101,6 +120,7 @@ fn detect_rate_limiting(session: &Session, ttl: u8) -> Option<RateLimitInfo> {
             reason: Some("Stable loss ratio suggests rate limiting".into()),
             hop_loss,
             downstream_loss,
+            negative_checks: 0,
         });
     }
 
@@ -167,15 +187,18 @@ fn is_stable_loss_ratio(recent: &VecDeque<bool>) -> bool {
     }
 
     // Split into three parts and compare loss ratios
+    // Handle remainder by giving it to the third segment
     let len = recent.len();
-    let third = len / 3;
+    let seg1_len = len / 3;
+    let seg2_len = len / 3;
+    let seg3_len = len - seg1_len - seg2_len; // Gets any remainder
 
-    let first_loss = recent.iter().take(third)
-        .filter(|&&r| !r).count() as f64 / third as f64;
-    let second_loss = recent.iter().skip(third).take(third)
-        .filter(|&&r| !r).count() as f64 / third as f64;
-    let third_loss = recent.iter().skip(2 * third)
-        .filter(|&&r| !r).count() as f64 / third as f64;
+    let first_loss = recent.iter().take(seg1_len)
+        .filter(|&&r| !r).count() as f64 / seg1_len as f64;
+    let second_loss = recent.iter().skip(seg1_len).take(seg2_len)
+        .filter(|&&r| !r).count() as f64 / seg2_len as f64;
+    let third_loss = recent.iter().skip(seg1_len + seg2_len)
+        .filter(|&&r| !r).count() as f64 / seg3_len as f64;
 
     // Calculate max difference between any two periods
     let max_diff = (first_loss - second_loss).abs()
@@ -257,5 +280,24 @@ mod tests {
             recent.push_back(true);
         }
         assert!(!is_stable_loss_ratio(&recent));
+    }
+
+    #[test]
+    fn test_stable_loss_ratio_non_divisible_length() {
+        // Test with length not divisible by 3 (e.g., 32)
+        // Should still detect stable loss correctly
+        let mut recent = VecDeque::new();
+        // 50% loss consistently across 32 samples
+        for i in 0..32 {
+            recent.push_back(i % 2 == 0);
+        }
+        assert!(is_stable_loss_ratio(&recent));
+
+        // Test with 25 samples (segments: 8, 8, 9)
+        let mut recent2 = VecDeque::new();
+        for i in 0..25 {
+            recent2.push_back(i % 2 == 0);
+        }
+        assert!(is_stable_loss_ratio(&recent2));
     }
 }

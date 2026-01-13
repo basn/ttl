@@ -446,6 +446,9 @@ pub struct RateLimitInfo {
     pub hop_loss: f64,
     /// Loss percentage at next responding hop (for comparison)
     pub downstream_loss: Option<f64>,
+    /// Consecutive negative detection checks (for hysteresis)
+    #[serde(default)]
+    pub negative_checks: u8,
 }
 
 /// A single hop (TTL level) in the path
@@ -768,6 +771,7 @@ impl Session {
             hop.recent_results.clear();
             hop.flow_paths.clear();
             hop.nat_info = None;
+            hop.rate_limit = None;
         }
     }
 
@@ -1054,6 +1058,15 @@ mod tests {
                 IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1)),
                 Duration::from_millis(5),
             );
+            // Add rate limit info that should be cleared on reset
+            hop.rate_limit = Some(RateLimitInfo {
+                suspected: true,
+                confidence: 0.8,
+                reason: Some("test".into()),
+                hop_loss: 50.0,
+                downstream_loss: Some(0.0),
+                negative_checks: 0,
+            });
         }
 
         // Reset
@@ -1066,6 +1079,7 @@ mod tests {
         assert_eq!(session.hop(1).unwrap().sent, 0);
         assert_eq!(session.hop(1).unwrap().received, 0);
         assert!(session.hop(1).unwrap().responders.is_empty());
+        assert!(session.hop(1).unwrap().rate_limit.is_none(), "rate_limit should be cleared on reset");
     }
 
     #[test]

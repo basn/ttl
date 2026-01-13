@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevents log spam and repeated API hits on unstable networks
 - **Longest prefix match**: Sort prefixes by length descending for correct matching
   - Previously returned first match; now returns most specific (longest) prefix
+- **Rate limit reset**: `reset_stats` now clears rate limit detection state
+  - Previously RL warnings could persist after reset or replay
+- **Stable loss ratio calculation**: Fixed segment length calculation for non-divisible window sizes
+  - Previously third segment used wrong divisor, skewing detection
+- **Rate limit clearing hysteresis**: Require 2 consecutive negative checks before clearing
+  - Also clears when downstream loss rises above 10% (isolated loss no longer applies)
+  - Prevents UI flicker while ensuring stale RL doesn't linger
 
 ### Technical
 - New `src/state/ratelimit.rs` module for detection logic
