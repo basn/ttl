@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GitHub Actions CI**: Automated build, test, clippy, and format checks on PRs
   - Runs on ubuntu-latest for all pushes to master and PRs
   - Strict clippy (`-D warnings`) catches issues before merge
+- **Rate limiting** (`--rate`): Limit probes per second to avoid triggering router rate limits
+  - Useful for slow links or avoiding overwhelming targets
+  - `--rate 0` = unlimited (default), `--rate 10` = 10 probes/sec max
+  - Global limit applies across all flows
+- **Source IP selection** (`--source-ip`): Force probes to use a specific source IP address
+  - Useful for multi-homed hosts with multiple IPs
+  - Works with all probe protocols (ICMP, UDP, TCP)
+  - Validates source IP family matches target family
 - **ICMP rate limit detection**: Identify when routers are rate-limiting ICMP responses
   - Detects misleading packet loss caused by router rate limiting (not actual packet drops)
   - Three detection heuristics:

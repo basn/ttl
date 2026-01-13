@@ -80,6 +80,17 @@ pub fn create_udp_dgram_socket_bound_with_interface(
     src_port: u16,
     interface: Option<&InterfaceInfo>,
 ) -> Result<Socket> {
+    create_udp_dgram_socket_bound_full(ipv6, src_port, interface, None)
+}
+
+/// Create a DGRAM UDP socket bound to source port, interface, and optionally source IP
+/// Interface binding must happen BEFORE address binding for proper behavior
+pub fn create_udp_dgram_socket_bound_full(
+    ipv6: bool,
+    src_port: u16,
+    interface: Option<&InterfaceInfo>,
+    source_ip: Option<IpAddr>,
+) -> Result<Socket> {
     let socket = create_udp_dgram_socket(ipv6)?;
 
     // Bind to interface BEFORE binding to address
@@ -88,11 +99,16 @@ pub fn create_udp_dgram_socket_bound_with_interface(
         bind_socket_to_interface(&socket, info)?;
     }
 
-    // Bind to the specified source port
-    let bind_addr = if ipv6 {
-        SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), src_port)
-    } else {
-        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), src_port)
+    // Bind to the specified source port (and optionally source IP)
+    let bind_addr = match source_ip {
+        Some(ip) => SocketAddr::new(ip, src_port),
+        None => {
+            if ipv6 {
+                SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), src_port)
+            } else {
+                SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), src_port)
+            }
+        }
     };
     socket.bind(&SockAddr::from(bind_addr))?;
 

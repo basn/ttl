@@ -136,6 +136,20 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Validate source IP matches target IP family
+    if let Some(source_ip) = config.source_ip
+        && source_ip.is_ipv6() != ipv6
+    {
+        eprintln!(
+            "Error: Source IP {} is {} but targets are {}. \
+             Use -4 or -6 to force matching IP version.",
+            source_ip,
+            if source_ip.is_ipv6() { "IPv6" } else { "IPv4" },
+            if ipv6 { "IPv6" } else { "IPv4" }
+        );
+        std::process::exit(1);
+    }
+
     // Run in appropriate mode
     if args.is_batch_mode() {
         run_batch_mode(args, sessions, targets, config, cancel, interface_info).await

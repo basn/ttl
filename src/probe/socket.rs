@@ -110,6 +110,14 @@ pub fn set_dscp(socket: &Socket, dscp: u8, ipv6: bool) -> Result<()> {
     Ok(())
 }
 
+/// Bind socket to a specific source IP address
+/// Call this after interface binding (if any) to force a specific source address
+pub fn bind_to_source_ip(socket: &Socket, ip: IpAddr) -> Result<()> {
+    let addr = SocketAddr::new(ip, 0);
+    socket.bind(&SockAddr::from(addr))?;
+    Ok(())
+}
+
 /// Send ICMP packet to target
 pub fn send_icmp(socket: &Socket, packet: &[u8], target: IpAddr) -> Result<usize> {
     let addr = SocketAddr::new(target, 0);

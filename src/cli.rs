@@ -113,6 +113,14 @@ pub struct Args {
     /// Probe packet size in bytes (28-1500, includes IP+ICMP headers)
     #[arg(long = "size", value_parser = clap::value_parser!(u16).range(28..=1500))]
     pub size: Option<u16>,
+
+    /// Maximum probes per second (0 = unlimited)
+    #[arg(long = "rate", value_parser = clap::value_parser!(u32).range(0..=10000))]
+    pub rate: Option<u32>,
+
+    /// Source IP address for probes
+    #[arg(long = "source-ip", value_name = "IP")]
+    pub source_ip: Option<std::net::IpAddr>,
 }
 
 impl Args {

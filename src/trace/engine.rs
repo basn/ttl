@@ -2,15 +2,17 @@ use anyhow::Result;
 use parking_lot::RwLock;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{Config, ProbeProtocol};
 use crate::probe::{
-    DEFAULT_PAYLOAD_SIZE, ICMP_HEADER_SIZE, InterfaceInfo, build_echo_request, build_tcp_syn,
-    build_udp_payload, create_send_socket_with_interface, create_tcp_socket_with_interface,
-    create_udp_dgram_socket, create_udp_dgram_socket_bound_with_interface, get_identifier,
-    get_local_addr_with_interface, send_icmp, send_tcp_probe, send_udp_probe, set_dscp, set_ttl,
+    DEFAULT_PAYLOAD_SIZE, ICMP_HEADER_SIZE, InterfaceInfo, bind_to_source_ip, build_echo_request,
+    build_tcp_syn, build_udp_payload, create_send_socket_with_interface,
+    create_tcp_socket_with_interface, create_udp_dgram_socket,
+    create_udp_dgram_socket_bound_full, create_udp_dgram_socket_bound_with_interface,
+    get_identifier, get_local_addr_with_interface, send_icmp, send_tcp_probe, send_udp_probe,
+    set_dscp, set_ttl,
 };
 use crate::state::{ProbeId, Session};
 use crate::trace::pending::{PendingMap, PendingProbe};
@@ -43,6 +45,24 @@ impl ProbeEngine {
             pending,
             cancel,
             interface,
+        }
+    }
+
+    /// Get rate limit delay between probes (if rate is configured)
+    fn rate_delay(&self) -> Option<Duration> {
+        self.config.rate.and_then(|rate| {
+            if rate > 0 {
+                Some(Duration::from_secs_f64(1.0 / rate as f64))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Apply rate limiting delay if configured
+    async fn apply_rate_limit(&self) {
+        if let Some(delay) = self.rate_delay() {
+            tokio::time::sleep(delay).await;
         }
     }
 
@@ -99,6 +119,11 @@ impl ProbeEngine {
     async fn run_icmp(self) -> Result<()> {
         let ipv6 = self.target.is_ipv6();
         let socket = create_send_socket_with_interface(ipv6, self.interface.as_ref())?;
+
+        // Bind to specific source IP if configured
+        if let Some(source_ip) = self.config.source_ip {
+            bind_to_source_ip(&socket, source_ip)?;
+        }
 
         let mut seq: u8 = 0;
         let mut total_sent: u64 = 0;
@@ -200,6 +225,9 @@ impl ProbeEngine {
                         }
 
                         total_sent += 1;
+
+                        // Apply rate limiting if configured
+                        self.apply_rate_limit().await;
                     }
 
                     seq = seq.wrapping_add(1);
@@ -220,10 +248,11 @@ impl ProbeEngine {
         let mut sockets = Vec::with_capacity(num_flows as usize);
         for flow_id in 0..num_flows {
             let src_port = self.config.src_port_base + (flow_id as u16);
-            let socket = create_udp_dgram_socket_bound_with_interface(
+            let socket = create_udp_dgram_socket_bound_full(
                 ipv6,
                 src_port,
                 self.interface.as_ref(),
+                self.config.source_ip,
             )?;
             sockets.push(socket);
         }
@@ -326,6 +355,9 @@ impl ProbeEngine {
                             }
 
                             total_sent += 1;
+
+                            // Apply rate limiting if configured
+                            self.apply_rate_limit().await;
                         }
                     }
 
@@ -341,13 +373,21 @@ impl ProbeEngine {
     async fn run_tcp(self) -> Result<()> {
         let ipv6 = self.target.is_ipv6();
         let socket = create_tcp_socket_with_interface(ipv6, self.interface.as_ref())?;
+
+        // Bind to specific source IP if configured
+        if let Some(source_ip) = self.config.source_ip {
+            bind_to_source_ip(&socket, source_ip)?;
+        }
+
         let num_flows = self.config.flows;
 
         // Base port for TCP probes (default: 80)
         let base_port = self.config.port.unwrap_or(80);
 
-        // Source IP for checksum calculation (use interface IP if specified)
-        let src_ip = get_local_addr_with_interface(self.target, self.interface.as_ref());
+        // Source IP for checksum calculation (use explicit source_ip, or interface IP, or kernel default)
+        let src_ip = self.config.source_ip.unwrap_or_else(|| {
+            get_local_addr_with_interface(self.target, self.interface.as_ref())
+        });
 
         let mut seq: u8 = 0;
         let mut total_sent: u64 = 0;
@@ -446,6 +486,9 @@ impl ProbeEngine {
                             }
 
                             total_sent += 1;
+
+                            // Apply rate limiting if configured
+                            self.apply_rate_limit().await;
                         }
                     }
 

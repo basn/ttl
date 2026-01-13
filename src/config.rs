@@ -1,5 +1,6 @@
 use crate::cli::Args;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::time::Duration;
 
 /// Probe protocol type
@@ -58,6 +59,12 @@ pub struct Config {
     /// Probe packet size in bytes (includes IP+ICMP headers)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packet_size: Option<u16>,
+    /// Maximum probes per second (None = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<u32>,
+    /// Source IP address for probes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<IpAddr>,
 }
 
 fn default_flows() -> u8 {
@@ -87,6 +94,8 @@ impl Default for Config {
             recv_any: false,
             dscp: None,
             packet_size: None,
+            rate: None,
+            source_ip: None,
         }
     }
 }
@@ -129,6 +138,8 @@ impl From<&Args> for Config {
             recv_any: args.recv_any,
             dscp: args.dscp,
             packet_size: args.size,
+            rate: args.rate,
+            source_ip: args.source_ip,
         }
     }
 }
