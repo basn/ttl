@@ -147,6 +147,14 @@
 - [ ] World map visualization (ASCII/Unicode geographic path display)
 - [ ] Hop privacy mode (mask sensitive IPs for screenshots/sharing)
 
+### Testing & Code Quality
+- [ ] Integration tests for probe→receive→state pipeline
+- [ ] Property-based/fuzz tests for packet parsing (correlate.rs)
+- [ ] IX lookup performance: radix trie for O(prefix_len) instead of O(n) linear scan
+- [ ] Refactor Receiver::new() 9-arg signature to config struct
+- [ ] Document --pmtud flag in README
+- [ ] Fix naming inconsistency: fixed_port (CLI) vs port_fixed (Config)
+
 ### Infrastructure
 - [x] GitHub Actions CI (build, test, clippy)
 - [ ] Binary releases (Linux, macOS)
