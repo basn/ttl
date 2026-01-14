@@ -148,7 +148,7 @@
 
 ### Testing & Code Quality
 - [x] Integration tests for probe→receive→state pipeline
-- [ ] Property-based/fuzz tests for packet parsing (correlate.rs)
+- [x] Property-based/fuzz tests for packet parsing (correlate.rs)
 - [ ] IX lookup performance: radix trie for O(prefix_len) instead of O(n) linear scan
 - [x] Refactor Receiver::new() 9-arg signature to config struct
 - [x] Document --pmtud flag in README

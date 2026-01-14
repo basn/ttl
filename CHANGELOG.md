@@ -402,6 +402,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Troubleshooting section in README (permissions, high loss, IPv6, DNS)
 
 ### Tests
-- 83 unit tests covering ICMP parsing, stats calculation, session state
-- 10 integration tests for probe→state pipeline
+- 92 unit tests covering ICMP parsing, stats calculation, session state
+- 20 integration tests for probe→state pipeline
+- 9 property-based tests (proptest) for packet parsing robustness
 - Tests for IPv6 extension headers, ECMP scenarios, edge cases

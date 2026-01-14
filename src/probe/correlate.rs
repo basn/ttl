@@ -1325,4 +1325,129 @@ mod tests {
         // Should have no MPLS labels (packet too short)
         assert!(parsed.mpls_labels.is_none());
     }
+
+    // ========================================================================
+    // Property-based tests (proptest)
+    // ========================================================================
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// ProbeId should roundtrip through sequence encoding for all values
+        #[test]
+        fn proptest_probe_id_roundtrip(ttl in 0u8..=255, seq in 0u8..=255) {
+            let original = ProbeId::new(ttl, seq);
+            let encoded = original.to_sequence();
+            let decoded = ProbeId::from_sequence(encoded);
+
+            prop_assert_eq!(decoded.ttl, original.ttl);
+            prop_assert_eq!(decoded.seq, original.seq);
+        }
+
+        /// Any u16 sequence should decode and re-encode to the same value
+        #[test]
+        fn proptest_probe_id_from_any_sequence(seq in 0u16..=65535) {
+            let decoded = ProbeId::from_sequence(seq);
+            let re_encoded = decoded.to_sequence();
+
+            prop_assert_eq!(re_encoded, seq);
+        }
+
+        /// MplsLabel should correctly parse label, exp, bottom, and ttl fields
+        #[test]
+        fn proptest_mpls_label_parsing(
+            label in 0u32..=0xFFFFF,  // 20 bits
+            exp in 0u8..=7,           // 3 bits
+            bottom in prop::bool::ANY,
+            ttl in 0u8..=255          // 8 bits
+        ) {
+            let bottom_bit = if bottom { 1u32 } else { 0u32 };
+            let word = (label << 12) | ((exp as u32) << 9) | (bottom_bit << 8) | (ttl as u32);
+            let bytes = word.to_be_bytes();
+
+            let parsed = MplsLabel::from_bytes(&bytes);
+
+            prop_assert_eq!(parsed.label, label);
+            prop_assert_eq!(parsed.exp, exp);
+            prop_assert_eq!(parsed.bottom, bottom);
+            prop_assert_eq!(parsed.ttl, ttl);
+        }
+
+        /// Any 4 bytes should parse as MplsLabel without panicking
+        #[test]
+        fn proptest_mpls_label_no_panic(b0 in 0u8..=255, b1 in 0u8..=255, b2 in 0u8..=255, b3 in 0u8..=255) {
+            let bytes = [b0, b1, b2, b3];
+            let _ = MplsLabel::from_bytes(&bytes);
+        }
+
+        /// Random bytes should not panic when parsed as ICMP
+        #[test]
+        fn proptest_parse_icmp_no_panic(data in prop::collection::vec(0u8..=255, 0..1500)) {
+            let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
+            let _ = parse_icmp_response(&data, responder, 0x1234);
+        }
+
+        /// Packets with random IP version nibbles should not panic
+        #[test]
+        fn proptest_parse_icmp_random_version(version in 0u8..=15, rest in prop::collection::vec(0u8..=255, 20..100)) {
+            let mut data = rest;
+            if !data.is_empty() {
+                data[0] = (version << 4) | (data[0] & 0x0F);
+            }
+
+            let responder = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
+            let _ = parse_icmp_response(&data, responder, 0x5678);
+        }
+
+        /// IPv4 packets with various IHL values should not panic
+        #[test]
+        fn proptest_parse_ipv4_variable_ihl(
+            ihl in 5u8..=15,
+            payload in prop::collection::vec(0u8..=255, 0..200)
+        ) {
+            let header_len = (ihl as usize) * 4;
+            let mut data = vec![0u8; header_len.max(20) + payload.len()];
+
+            data[0] = 0x40 | ihl;
+            let len = data.len() as u16;
+            data[2] = (len >> 8) as u8;
+            data[3] = len as u8;
+            data[9] = 1; // ICMP
+
+            if header_len < data.len() {
+                let copy_len = payload.len().min(data.len() - header_len);
+                data[header_len..header_len + copy_len].copy_from_slice(&payload[..copy_len]);
+            }
+
+            let responder = IpAddr::V4(std::net::Ipv4Addr::new(172, 16, 0, 1));
+            let _ = parse_icmp_response(&data, responder, 0x9999);
+        }
+
+        /// ICMP checksum validation should handle all byte patterns
+        #[test]
+        fn proptest_checksum_no_panic(data in prop::collection::vec(0u8..=255, 0..100)) {
+            let _ = validate_icmp_checksum(&data);
+        }
+
+        /// Valid checksums should validate correctly
+        #[test]
+        fn proptest_valid_checksum_validates(
+            identifier in 0u16..=65535,
+            sequence in 0u16..=65535
+        ) {
+            // Build Echo Reply with correct checksum
+            let mut packet = vec![
+                0,    // Type: Echo Reply
+                0,    // Code
+                0, 0, // Checksum (placeholder)
+                (identifier >> 8) as u8,
+                identifier as u8,
+                (sequence >> 8) as u8,
+                sequence as u8,
+            ];
+
+            set_icmp_checksum(&mut packet);
+            prop_assert!(validate_icmp_checksum(&packet));
+        }
+    }
 }
