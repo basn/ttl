@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hop detail view shows detection reason, confidence level, and mitigation tip
   - Tip suggests slower probing with `-i 1.0` or `-i 2.0` to avoid triggering limits
   - Detection automatically clears when loss drops below threshold
+- **First-hop gateway detection**: Display source IP and default gateway in TUI
+  - Shows routing info in title bar: `eth0 (192.168.1.100 → 192.168.1.1)`
+  - Auto-detects default gateway from system routing table
+  - Works with or without `--interface` flag
+  - Parses `ip route show` on Linux, `route -n get default` on macOS
+  - Gateway info also populated when using `--interface` option
 
 ### Fixed
 - **PeeringDB pagination**: Added `limit=0` to API requests to fetch all IX records
@@ -108,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IX lookup uses `tokio::sync::OnceCell` for thread-safe lazy initialization
 - Refactored `Receiver::new()` and `spawn_receiver()` to use `ReceiverConfig` struct (9 args → 4 args)
 - Renamed internal `fixed_port` field to `port_fixed` for Rust naming consistency
+- Gateway detection: `detect_gateway_ipv4()` and `detect_gateway_ipv6()` in `interface.rs`
+- Gateway detection: `detect_default_gateway()` for auto-detected interface routing
+- `InterfaceInfo` extended with `gateway_ipv4` and `gateway_ipv6` fields
+- `Session` extended with `source_ip` and `gateway` fields for TUI display
 
 ## [0.9.0] - 2026-01-13
 

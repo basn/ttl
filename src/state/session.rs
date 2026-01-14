@@ -833,6 +833,12 @@ pub struct Session {
     /// PMTUD state (only present when --pmtud is enabled)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pmtud: Option<PmtudState>,
+    /// Source IP used for probes (for display in TUI)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<IpAddr>,
+    /// Default gateway IP (for display in TUI)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<IpAddr>,
 }
 
 impl Session {
@@ -860,6 +866,8 @@ impl Session {
             total_sent: 0,
             paused: false,
             pmtud,
+            source_ip: None,
+            gateway: None,
         }
     }
 

@@ -101,20 +101,43 @@ impl Widget for MainView<'_> {
         let probe_count = self.session.total_sent;
         let interval_ms = self.session.config.interval.as_millis();
 
-        // Show interface binding if specified
-        let iface_str = self
-            .session
-            .config
-            .interface
-            .as_ref()
-            .map(|i| format!(" via {}", i))
-            .unwrap_or_default();
+        // Show routing info: interface name, source IP, and gateway
+        let routing_str = {
+            let iface = self.session.config.interface.as_ref();
+            let src_ip = self.session.source_ip;
+            let gateway = self.session.gateway;
+
+            match (iface, src_ip, gateway) {
+                // Full info: interface (source → gateway)
+                (Some(i), Some(src), Some(gw)) => {
+                    format!(" {} ({} → {})", i, src, gw)
+                }
+                // Interface with source only
+                (Some(i), Some(src), None) => {
+                    format!(" {} ({})", i, src)
+                }
+                // Interface only (fallback)
+                (Some(i), None, _) => {
+                    format!(" via {}", i)
+                }
+                // No interface but have routing info
+                (None, Some(src), Some(gw)) => {
+                    format!(" {} → {}", src, gw)
+                }
+                // Source only
+                (None, Some(src), None) => {
+                    format!(" {}", src)
+                }
+                // No routing info
+                (None, None, _) => String::new(),
+            }
+        };
 
         let title = format!(
             "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}",
             target_indicator,
             target_str,
-            iface_str,
+            routing_str,
             probe_count,
             interval_ms,
             status,

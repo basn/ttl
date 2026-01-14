@@ -27,7 +27,10 @@ use lookup::geo::{GeoLookup, run_geo_worker};
 use lookup::ix::{IxLookup, run_ix_worker};
 use lookup::rdns::{DnsLookup, run_dns_worker};
 use prefs::Prefs;
-use probe::{InterfaceInfo, check_permissions, validate_interface};
+use probe::{
+    InterfaceInfo, check_permissions, detect_default_gateway, get_local_addr_with_interface,
+    validate_interface,
+};
 use state::{Session, Target, run_ratelimit_worker};
 use trace::engine::ProbeEngine;
 use trace::pending::new_pending_map;
@@ -88,7 +91,25 @@ async fn main() -> Result<()> {
         }
 
         let target = Target::new(target_str.clone(), resolved_ip);
-        let session = Session::new(target, config.clone());
+        let mut session = Session::new(target, config.clone());
+
+        // Set source IP and gateway for display in TUI
+        let ipv6 = resolved_ip.is_ipv6();
+        session.source_ip = config
+            .source_ip
+            .or_else(|| Some(get_local_addr_with_interface(resolved_ip, interface_info.as_ref())));
+        session.gateway = if let Some(ref info) = interface_info {
+            // Use interface-specific gateway
+            if ipv6 {
+                info.gateway_ipv6.map(IpAddr::V6)
+            } else {
+                info.gateway_ipv4.map(IpAddr::V4)
+            }
+        } else {
+            // Detect default gateway for auto-selected interface
+            detect_default_gateway(ipv6)
+        };
+
         sessions_map.insert(resolved_ip, Arc::new(RwLock::new(session)));
         targets.push(resolved_ip);
     }

@@ -98,13 +98,13 @@
 - [x] IPv6 link-local detection and rejection
 - [x] Interface-aware auto-protocol detection
 
-### v0.8.0 - Probe Control & MTU
+### v0.8.0 - Probe Control & MTU (Released)
 - [x] Source IP selection (`--source-ip 10.0.0.1`)
 - [x] Packet size control (`--size 1400`)
 - [x] Path MTU discovery mode (`--pmtud`, binary search for max unfragmented size)
 - [x] DSCP/ToS marking (`--dscp 46`) for QoS policy testing
 - [x] Flows per second control (`--rate`)
-- [ ] First-hop gateway detection (show which interface/gateway is used)
+- [x] First-hop gateway detection (show source IP and gateway in TUI title bar)
 
 ### v0.9.0 - IX Detection (Released)
 - [x] IX detection via PeeringDB (identify Internet Exchange points in path)

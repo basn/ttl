@@ -30,6 +30,237 @@ pub struct InterfaceInfo {
     pub ipv4: Option<Ipv4Addr>,
     /// First IPv6 address on the interface (if any)
     pub ipv6: Option<Ipv6Addr>,
+    /// Default gateway IPv4 address (if detected)
+    pub gateway_ipv4: Option<Ipv4Addr>,
+    /// Default gateway IPv6 address (if detected)
+    pub gateway_ipv6: Option<Ipv6Addr>,
+}
+
+/// Detect the default IPv4 gateway for an interface from the routing table
+///
+/// Returns None if gateway cannot be determined (command fails, no default route, etc.)
+fn detect_gateway_ipv4(interface: &str) -> Option<Ipv4Addr> {
+    #[cfg(target_os = "linux")]
+    {
+        // Parse output of: ip route show default dev <interface>
+        // Format: "default via 192.168.1.1 dev eth0 ..."
+        let output = std::process::Command::new("ip")
+            .args(["route", "show", "default", "dev", interface])
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_linux_route_gateway(&stdout)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Parse output of: route -n get default
+        // Then filter by interface
+        let output = std::process::Command::new("route")
+            .args(["-n", "get", "default"])
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_macos_route_gateway(&stdout, interface)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = interface;
+        None
+    }
+}
+
+/// Detect the default IPv6 gateway for an interface from the routing table
+fn detect_gateway_ipv6(interface: &str) -> Option<Ipv6Addr> {
+    #[cfg(target_os = "linux")]
+    {
+        // Parse output of: ip -6 route show default dev <interface>
+        // Format: "default via fe80::1 dev eth0 ..."
+        let output = std::process::Command::new("ip")
+            .args(["-6", "route", "show", "default", "dev", interface])
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_linux_route_gateway_v6(&stdout)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Parse output of: route -n get -inet6 default
+        let output = std::process::Command::new("route")
+            .args(["-n", "get", "-inet6", "default"])
+            .output()
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_macos_route_gateway_v6(&stdout, interface)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = interface;
+        None
+    }
+}
+
+/// Parse Linux `ip route show` output for gateway address
+/// Example: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
+#[cfg(target_os = "linux")]
+fn parse_linux_route_gateway(output: &str) -> Option<Ipv4Addr> {
+    for line in output.lines() {
+        if line.starts_with("default") {
+            // Look for "via <ip>" pattern
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(pos) = parts.iter().position(|&p| p == "via")
+                && let Some(ip_str) = parts.get(pos + 1)
+            {
+                return ip_str.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Parse Linux `ip -6 route show` output for gateway address
+#[cfg(target_os = "linux")]
+fn parse_linux_route_gateway_v6(output: &str) -> Option<Ipv6Addr> {
+    for line in output.lines() {
+        if line.starts_with("default") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(pos) = parts.iter().position(|&p| p == "via")
+                && let Some(ip_str) = parts.get(pos + 1)
+            {
+                // IPv6 gateway might have %interface suffix, strip it
+                let clean = ip_str.split('%').next().unwrap_or(ip_str);
+                return clean.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Parse macOS `route -n get default` output for gateway address
+/// Example output:
+///    route to: default
+/// destination: default
+///        mask: default
+///     gateway: 192.168.1.1
+///   interface: en0
+#[cfg(target_os = "macos")]
+fn parse_macos_route_gateway(output: &str, expected_interface: &str) -> Option<Ipv4Addr> {
+    let mut gateway: Option<Ipv4Addr> = None;
+    let mut interface: Option<&str> = None;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("gateway:") {
+            gateway = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("interface:") {
+            interface = Some(rest.trim());
+        }
+    }
+
+    // Only return gateway if it's for the expected interface
+    if interface == Some(expected_interface) {
+        gateway
+    } else {
+        None
+    }
+}
+
+/// Parse macOS `route -n get -inet6 default` output for IPv6 gateway
+#[cfg(target_os = "macos")]
+fn parse_macos_route_gateway_v6(output: &str, expected_interface: &str) -> Option<Ipv6Addr> {
+    let mut gateway: Option<Ipv6Addr> = None;
+    let mut interface: Option<&str> = None;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("gateway:") {
+            let clean = rest.trim().split('%').next().unwrap_or(rest.trim());
+            gateway = clean.parse().ok();
+        } else if let Some(rest) = line.strip_prefix("interface:") {
+            interface = Some(rest.trim());
+        }
+    }
+
+    if interface == Some(expected_interface) {
+        gateway
+    } else {
+        None
+    }
+}
+
+/// Detect default gateway without specifying an interface
+///
+/// Useful when no --interface flag is provided but we still want to show
+/// which gateway will be used.
+pub fn detect_default_gateway(ipv6: bool) -> Option<IpAddr> {
+    #[cfg(target_os = "linux")]
+    {
+        if ipv6 {
+            let output = std::process::Command::new("ip")
+                .args(["-6", "route", "show", "default"])
+                .output()
+                .ok()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            parse_linux_route_gateway_v6(&stdout).map(IpAddr::V6)
+        } else {
+            let output = std::process::Command::new("ip")
+                .args(["route", "show", "default"])
+                .output()
+                .ok()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            parse_linux_route_gateway(&stdout).map(IpAddr::V4)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if ipv6 {
+            let output = std::process::Command::new("route")
+                .args(["-n", "get", "-inet6", "default"])
+                .output()
+                .ok()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // For default gateway without interface filter, just extract gateway
+            for line in stdout.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("gateway:") {
+                    let clean = rest.trim().split('%').next().unwrap_or(rest.trim());
+                    if let Ok(addr) = clean.parse::<Ipv6Addr>() {
+                        return Some(IpAddr::V6(addr));
+                    }
+                }
+            }
+            None
+        } else {
+            let output = std::process::Command::new("route")
+                .args(["-n", "get", "default"])
+                .output()
+                .ok()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("gateway:") {
+                    if let Ok(addr) = rest.trim().parse::<Ipv4Addr>() {
+                        return Some(IpAddr::V4(addr));
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = ipv6;
+        None
+    }
 }
 
 /// Validate that an interface exists and get its information
@@ -88,11 +319,17 @@ pub fn validate_interface(name: &str) -> Result<InterfaceInfo> {
                 }
             }
 
+            // Detect gateway addresses for this interface
+            let gateway_ipv4 = detect_gateway_ipv4(name);
+            let gateway_ipv6 = detect_gateway_ipv6(name);
+
             return Ok(InterfaceInfo {
                 name: name.to_string(),
                 index: iface.index,
                 ipv4,
                 ipv6,
+                gateway_ipv4,
+                gateway_ipv6,
             });
         }
     }
