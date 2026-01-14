@@ -448,6 +448,100 @@ pub struct RouteChange {
     pub at_seq: u64,
 }
 
+/// Asymmetric routing detection information for a hop
+///
+/// Detects when the return path (from router back to us) differs from the
+/// forward path by analyzing the TTL of ICMP responses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AsymmetryInfo {
+    /// Count of samples with detected asymmetry (diff >= threshold)
+    pub asymmetric_samples: u64,
+    /// Count of samples without asymmetry
+    pub symmetric_samples: u64,
+    /// Whether asymmetry is suspected (>50% of samples after min threshold)
+    pub suspected: bool,
+    /// Confidence level (asymmetric_samples / total_samples)
+    pub confidence: f64,
+    /// Average difference between forward and return hops
+    pub avg_hop_difference: f64,
+    /// Most recent return hop estimate
+    pub last_return_hops: Option<u8>,
+    /// Variance of hop difference (high variance = return-path ECMP)
+    pub variance: f64,
+    /// Internal: M2 for Welford's variance algorithm
+    #[serde(skip)]
+    m2: f64,
+    /// Internal: mean hop difference for Welford's algorithm
+    #[serde(skip)]
+    mean_diff: f64,
+}
+
+impl AsymmetryInfo {
+    /// Asymmetry threshold: flag if |return_hops - forward_ttl| >= this
+    const ASYMMETRY_THRESHOLD: i16 = 3;
+    /// Minimum samples before flagging asymmetry
+    const MIN_SAMPLES: u64 = 5;
+
+    /// Record a response TTL observation
+    pub fn record_response(&mut self, forward_ttl: u8, response_ttl: u8, ipv6: bool) {
+        let return_hops = estimate_return_hops(response_ttl, ipv6);
+        let diff = (return_hops as i16 - forward_ttl as i16).abs();
+
+        // Track mean and variance using Welford's algorithm
+        let n = (self.asymmetric_samples + self.symmetric_samples + 1) as f64;
+        let delta = diff as f64 - self.mean_diff;
+        self.mean_diff += delta / n;
+        let delta2 = diff as f64 - self.mean_diff;
+        self.m2 += delta * delta2;
+        self.variance = if n > 1.0 { self.m2 / (n - 1.0) } else { 0.0 };
+
+        // Update average hop difference
+        let total = self.asymmetric_samples + self.symmetric_samples;
+        self.avg_hop_difference =
+            (self.avg_hop_difference * total as f64 + diff as f64) / (total + 1) as f64;
+
+        // Classify this sample
+        if diff >= Self::ASYMMETRY_THRESHOLD {
+            self.asymmetric_samples += 1;
+        } else {
+            self.symmetric_samples += 1;
+        }
+
+        self.last_return_hops = Some(return_hops);
+
+        // Update detection status
+        let total = self.asymmetric_samples + self.symmetric_samples;
+        if total >= Self::MIN_SAMPLES {
+            self.confidence = self.asymmetric_samples as f64 / total as f64;
+            // Require >50% of samples to show asymmetry
+            self.suspected = self.confidence > 0.5;
+        }
+    }
+}
+
+/// Estimate the number of return hops based on observed response TTL
+///
+/// Uses common initial TTL defaults to estimate how many hops the response
+/// traveled. Picks the smallest default >= observed TTL.
+fn estimate_return_hops(response_ttl: u8, _ipv6: bool) -> u8 {
+    // Common initial TTL/hop-limit defaults by OS/device type
+    // Must be sorted ascending for find() to work correctly
+    // IPv4 and IPv6 share the same common defaults:
+    //   64: Linux, macOS, most Unix
+    //   128: Windows
+    //   255: Network equipment (routers, switches)
+    let defaults: &[u8] = &[64, 128, 255];
+
+    // Find smallest default >= response_ttl
+    let init_ttl = defaults
+        .iter()
+        .copied()
+        .find(|&d| d >= response_ttl)
+        .unwrap_or(255);
+
+    init_ttl.saturating_sub(response_ttl)
+}
+
 /// Rate limit detection info for a hop
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RateLimitInfo {
@@ -620,6 +714,9 @@ pub struct Hop {
     /// Route changes (flaps) detected at this hop (single-flow mode only)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub route_changes: Vec<RouteChange>,
+    /// Asymmetric routing detection information for this hop
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asymmetry: Option<AsymmetryInfo>,
     /// Internal: tracks primary with hysteresis for flap detection only
     /// (separate from `primary` which always reflects true most-frequent)
     #[serde(skip)]
@@ -647,6 +744,7 @@ impl Hop {
             nat_info: None,
             rate_limit: None,
             route_changes: Vec::new(),
+            asymmetry: None,
             flap_tracking_primary: None,
         }
     }
@@ -878,6 +976,20 @@ impl Hop {
     pub fn has_nat(&self) -> bool {
         self.nat_info.as_ref().is_some_and(|n| n.has_nat())
     }
+
+    /// Record a response TTL for asymmetric routing detection
+    ///
+    /// Compares the return hops (estimated from response TTL) against
+    /// forward hops (this hop's TTL) to detect asymmetric routing.
+    pub fn record_response_ttl(&mut self, response_ttl: u8, ipv6: bool) {
+        let asymmetry = self.asymmetry.get_or_insert_with(AsymmetryInfo::default);
+        asymmetry.record_response(self.ttl, response_ttl, ipv6);
+    }
+
+    /// Check if asymmetric routing is suspected at this hop
+    pub fn has_asymmetry(&self) -> bool {
+        self.asymmetry.as_ref().is_some_and(|a| a.suspected)
+    }
 }
 
 /// Target being traced
@@ -1004,6 +1116,7 @@ impl Session {
             hop.nat_info = None;
             hop.rate_limit = None;
             hop.route_changes.clear();
+            hop.asymmetry = None;
             hop.flap_tracking_primary = None;
         }
     }
@@ -1747,5 +1860,137 @@ mod tests {
             hop.route_changes.is_empty(),
             "record_response_with_mpls should NOT record flaps (multi-flow mode)"
         );
+    }
+
+    #[test]
+    fn test_estimate_return_hops_ipv4() {
+        // Response TTL 62 -> init=64 -> return=2 hops
+        assert_eq!(estimate_return_hops(62, false), 2);
+        // Response TTL 126 -> init=128 -> return=2 hops
+        assert_eq!(estimate_return_hops(126, false), 2);
+        // Response TTL 253 -> init=255 -> return=2 hops
+        assert_eq!(estimate_return_hops(253, false), 2);
+        // Response TTL 64 -> init=64 -> return=0 hops (same machine)
+        assert_eq!(estimate_return_hops(64, false), 0);
+        // Response TTL 1 -> init=64 -> return=63 hops
+        assert_eq!(estimate_return_hops(1, false), 63);
+    }
+
+    #[test]
+    fn test_estimate_return_hops_ipv6() {
+        // Response TTL 62 -> init=64 -> return=2 hops
+        assert_eq!(estimate_return_hops(62, true), 2);
+        // Response TTL 126 -> init=128 -> return=2 hops (Windows IPv6)
+        assert_eq!(estimate_return_hops(126, true), 2);
+        // Response TTL 200 -> init=255 -> return=55 hops
+        assert_eq!(estimate_return_hops(200, true), 55);
+    }
+
+    #[test]
+    fn test_asymmetry_detection_symmetric() {
+        let mut info = AsymmetryInfo::default();
+        // Forward=5, response_ttl=59 -> return=5 hops (from init=64)
+        // diff = |5-5| = 0, symmetric
+        for _ in 0..10 {
+            info.record_response(5, 59, false);
+        }
+        assert!(!info.suspected, "Symmetric path should not be flagged");
+        assert_eq!(info.symmetric_samples, 10);
+        assert_eq!(info.asymmetric_samples, 0);
+    }
+
+    #[test]
+    fn test_asymmetry_detection_asymmetric() {
+        let mut info = AsymmetryInfo::default();
+        // Forward=5, response_ttl=54 -> return=10 hops (from init=64)
+        // diff = |10-5| = 5, asymmetric (>= threshold of 3)
+        for _ in 0..10 {
+            info.record_response(5, 54, false);
+        }
+        assert!(info.suspected, "Asymmetric path should be flagged");
+        assert_eq!(info.asymmetric_samples, 10);
+        assert_eq!(info.symmetric_samples, 0);
+        assert!(info.confidence > 0.5);
+    }
+
+    #[test]
+    fn test_asymmetry_min_samples() {
+        let mut info = AsymmetryInfo::default();
+        // Add only 3 asymmetric samples (below min of 5)
+        for _ in 0..3 {
+            info.record_response(5, 54, false);
+        }
+        assert!(
+            !info.suspected,
+            "Should not flag with insufficient samples"
+        );
+
+        // Add 2 more to reach threshold
+        for _ in 0..2 {
+            info.record_response(5, 54, false);
+        }
+        assert!(info.suspected, "Should flag once min samples reached");
+    }
+
+    #[test]
+    fn test_asymmetry_mixed_results() {
+        let mut info = AsymmetryInfo::default();
+        // Mix of symmetric and asymmetric samples
+        // 7 symmetric (return=5, forward=5, diff=0)
+        for _ in 0..7 {
+            info.record_response(5, 59, false);
+        }
+        // 3 asymmetric (return=10, forward=5, diff=5)
+        for _ in 0..3 {
+            info.record_response(5, 54, false);
+        }
+
+        // 30% asymmetric is below 50% threshold
+        assert!(
+            !info.suspected,
+            "Below 50% asymmetric should not be flagged"
+        );
+        assert_eq!(info.symmetric_samples, 7);
+        assert_eq!(info.asymmetric_samples, 3);
+    }
+
+    #[test]
+    fn test_hop_record_response_ttl() {
+        let mut hop = Hop::new(5);
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+
+        // Record some responses first
+        for _ in 0..10 {
+            hop.record_response(ip, Duration::from_millis(10));
+            hop.record_response_ttl(54, false); // asymmetric
+        }
+
+        assert!(hop.asymmetry.is_some());
+        let asym = hop.asymmetry.as_ref().unwrap();
+        assert!(asym.suspected);
+        assert!(hop.has_asymmetry());
+    }
+
+    #[test]
+    fn test_asymmetry_reset_clears() {
+        let target = Target::new(
+            "test.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)),
+        );
+        let config = Config::default();
+        let mut session = Session::new(target, config);
+
+        // Add asymmetry data
+        if let Some(hop) = session.hop_mut(1) {
+            for _ in 0..10 {
+                hop.record_response_ttl(54, false);
+            }
+        }
+
+        assert!(session.hop(1).unwrap().asymmetry.is_some());
+
+        // Reset should clear
+        session.reset_stats();
+        assert!(session.hop(1).unwrap().asymmetry.is_none());
     }
 }

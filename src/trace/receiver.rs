@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::probe::{
     InterfaceInfo, create_recv_socket_with_interface, get_identifier, parse_icmp_response,
-    recv_icmp,
+    recv_icmp_with_ttl,
 };
 use crate::state::{IcmpResponseType, MplsLabel, PmtudPhase, ProbeId, Session};
 use crate::trace::pending::PendingMap;
@@ -58,6 +58,8 @@ struct BatchedResponse {
     packet_size: Option<u16>,
     /// MTU from ICMP Frag Needed / Packet Too Big (for PMTUD)
     reported_mtu: Option<u16>,
+    /// TTL/hop-limit from the response IP header (for asymmetry detection)
+    response_ttl: Option<u8>,
 }
 
 /// The receiver listens for ICMP responses and correlates them to probes
@@ -123,14 +125,14 @@ impl Receiver {
                     break;
                 }
 
-                match recv_icmp(&socket, &mut buffer) {
-                    Ok((len, responder)) => {
+                match recv_icmp_with_ttl(&socket, &mut buffer, self.config.ipv6) {
+                    Ok(recv_result) => {
                         // Reset consecutive error count on successful receive
                         self.consecutive_errors = 0;
                         batch_count += 1;
 
                         if let Some(parsed) =
-                            parse_icmp_response(&buffer[..len], responder, identifier)
+                            parse_icmp_response(&buffer[..recv_result.len], recv_result.source, identifier)
                         {
                             // Derive flow_id from source port in ICMP error payload
                             // For UDP/TCP: src_port = src_port_base + flow_id
@@ -190,6 +192,7 @@ impl Receiver {
                                     returned_src_port: parsed.src_port,
                                     packet_size: probe.packet_size,
                                     reported_mtu: parsed.mtu,
+                                    response_ttl: recv_result.response_ttl,
                                 });
                             } else {
                                 // Late packet arrival - response came after timeout
@@ -259,6 +262,12 @@ impl Receiver {
                             hop.record_flow_response(resp.flow_id, resp.responder, resp.rtt);
                             // Record NAT detection result (compare sent vs returned source port)
                             hop.record_nat_check(resp.original_src_port, resp.returned_src_port);
+                            // Asymmetric routing detection (single-flow mode only, like flap detection)
+                            if self.config.num_flows == 1
+                                && let Some(ttl) = resp.response_ttl
+                            {
+                                hop.record_response_ttl(ttl, self.config.ipv6);
+                            }
                         }
 
                         // Check if we reached the destination

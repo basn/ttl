@@ -82,6 +82,12 @@ impl Widget for MainView<'_> {
             .iter()
             .any(|h| h.rate_limit.as_ref().map(|r| r.suspected).unwrap_or(false));
         let rl_warn = if has_rate_limit { " [RL?]" } else { "" };
+        let has_asymmetry = self
+            .session
+            .hops
+            .iter()
+            .any(|h| h.has_asymmetry());
+        let asym_warn = if has_asymmetry { " [ASYM]" } else { "" };
 
         // PMTUD status indicator
         let pmtud_status = self
@@ -134,7 +140,7 @@ impl Widget for MainView<'_> {
         };
 
         let title = format!(
-            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}",
+            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}{}",
             target_indicator,
             target_str,
             routing_str,
@@ -143,6 +149,7 @@ impl Widget for MainView<'_> {
             status,
             nat_warn,
             rl_warn,
+            asym_warn,
             pmtud_status
         );
 
@@ -200,13 +207,21 @@ impl Widget for MainView<'_> {
                     } else {
                         String::new()
                     };
-                    // Add flap indicator in single-flow mode when route changes detected
+                    // Add indicators in single-flow mode
+                    // ! = route flap, ~ = asymmetric routing
                     let has_flap = !multi_flow && !hop.route_changes.is_empty();
-                    // Truncate to 26 when flap indicator shown (2 chars), otherwise 28
-                    let max_len = if has_flap { 26 } else { 28 };
+                    let has_asym = !multi_flow && hop.has_asymmetry();
+                    // Build indicator string (each takes 2 chars including space)
+                    let indicators = match (has_flap, has_asym) {
+                        (true, true) => " !~",
+                        (true, false) => " !",
+                        (false, true) => " ~",
+                        (false, false) => "",
+                    };
+                    // Truncate to leave room for indicators
+                    let max_len = 28 - indicators.len();
                     let truncated = truncate_with_ellipsis(&display, max_len);
-                    let flap_indicator = if has_flap { " !" } else { "" };
-                    (format!("{}{}", truncated, flap_indicator), asn)
+                    (format!("{}{}", truncated, indicators), asn)
                 } else if hop.received == 0 {
                     ("* * *".to_string(), String::new())
                 } else {

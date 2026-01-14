@@ -1,6 +1,5 @@
 use anyhow::{Result, anyhow};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use std::mem::MaybeUninit;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
@@ -213,19 +212,163 @@ pub fn send_icmp(socket: &Socket, packet: &[u8], target: IpAddr) -> Result<usize
     Ok(sent)
 }
 
-/// Receive ICMP packet
-pub fn recv_icmp(socket: &Socket, buffer: &mut [u8]) -> Result<(usize, IpAddr)> {
-    // Convert buffer to MaybeUninit slice for socket2
-    let uninit_buf: &mut [MaybeUninit<u8>] = unsafe {
-        std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut MaybeUninit<u8>, buffer.len())
+// ============================================================================
+// Response TTL extraction for asymmetric routing detection
+// ============================================================================
+
+/// Result of receiving an ICMP packet with TTL info
+#[derive(Debug)]
+pub struct RecvResult {
+    pub len: usize,
+    pub source: IpAddr,
+    /// TTL/hop-limit from the IP header of the response packet
+    pub response_ttl: Option<u8>,
+}
+
+/// Enable IP_RECVTTL/IPV6_RECVHOPLIMIT socket option
+/// This allows recvmsg() to return the TTL of received packets in ancillary data
+#[cfg(unix)]
+pub fn enable_recv_ttl(socket: &Socket, ipv6: bool) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    // Platform-specific constants
+    #[cfg(target_os = "linux")]
+    const IP_RECVTTL: libc::c_int = 12;
+    #[cfg(target_os = "linux")]
+    const IPV6_RECVHOPLIMIT: libc::c_int = 51;
+    #[cfg(target_os = "macos")]
+    const IP_RECVTTL: libc::c_int = 24;
+    #[cfg(target_os = "macos")]
+    const IPV6_RECVHOPLIMIT: libc::c_int = 37;
+
+    let (level, optname) = if ipv6 {
+        (libc::IPPROTO_IPV6, IPV6_RECVHOPLIMIT)
+    } else {
+        (libc::IPPROTO_IP, IP_RECVTTL)
     };
 
-    let (len, addr) = socket.recv_from(uninit_buf)?;
-    let ip = addr
-        .as_socket()
-        .map(|s| s.ip())
-        .ok_or_else(|| anyhow!("Invalid source address"))?;
-    Ok((len, ip))
+    let val: libc::c_int = 1;
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            optname,
+            &val as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&val) as libc::socklen_t,
+        )
+    };
+    if ret != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+/// Receive ICMP packet with response TTL from control message
+/// Uses recvmsg() to access ancillary data containing TTL/hop-limit
+#[cfg(unix)]
+pub fn recv_icmp_with_ttl(socket: &Socket, buffer: &mut [u8], ipv6: bool) -> Result<RecvResult> {
+    use std::os::unix::io::AsRawFd;
+
+    // Set up iovec for the data buffer
+    let mut iov = libc::iovec {
+        iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
+        iov_len: buffer.len(),
+    };
+
+    // Allocate control message buffer (for TTL)
+    let mut cmsg_buf = [0u8; 64];
+
+    // Source address storage
+    let mut src_storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+
+    // Set up msghdr
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_name = &mut src_storage as *mut _ as *mut libc::c_void;
+    msg.msg_namelen = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+    msg.msg_controllen = cmsg_buf.len();
+
+    // Receive the packet
+    let len = unsafe { libc::recvmsg(socket.as_raw_fd(), &mut msg, 0) };
+
+    if len < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    // Parse source address
+    let source = parse_sockaddr_storage(&src_storage)?;
+
+    // Extract TTL from control message
+    let response_ttl = extract_ttl_from_cmsg(&msg, ipv6);
+
+    Ok(RecvResult {
+        len: len as usize,
+        source,
+        response_ttl,
+    })
+}
+
+/// Extract TTL/hop limit from control message
+#[cfg(unix)]
+fn extract_ttl_from_cmsg(msg: &libc::msghdr, ipv6: bool) -> Option<u8> {
+    // Platform-specific cmsg type values for IP_TTL
+    // Linux: IP_TTL = 2
+    // macOS: IP_TTL = 4, but IP_RECVTTL = 24 - accept both to be safe
+    #[cfg(target_os = "linux")]
+    fn is_ip_ttl_type(cmsg_type: libc::c_int) -> bool {
+        cmsg_type == 2 // IP_TTL
+    }
+    #[cfg(target_os = "macos")]
+    fn is_ip_ttl_type(cmsg_type: libc::c_int) -> bool {
+        // Accept both IP_TTL (4) and IP_RECVTTL (24) since macOS may deliver either
+        cmsg_type == 4 || cmsg_type == 24
+    }
+
+    unsafe {
+        let mut cmsg = libc::CMSG_FIRSTHDR(msg);
+        while !cmsg.is_null() {
+            let hdr = &*cmsg;
+
+            if ipv6 {
+                // IPV6_HOPLIMIT
+                if hdr.cmsg_level == libc::IPPROTO_IPV6 && hdr.cmsg_type == libc::IPV6_HOPLIMIT {
+                    let data_ptr = libc::CMSG_DATA(cmsg);
+                    let ttl = *(data_ptr as *const i32);
+                    return Some(ttl as u8);
+                }
+            } else {
+                // IP_TTL - check platform-specific type(s)
+                if hdr.cmsg_level == libc::IPPROTO_IP && is_ip_ttl_type(hdr.cmsg_type) {
+                    let data_ptr = libc::CMSG_DATA(cmsg);
+                    let ttl = *(data_ptr as *const i32);
+                    return Some(ttl as u8);
+                }
+            }
+
+            cmsg = libc::CMSG_NXTHDR(msg, cmsg);
+        }
+    }
+    None
+}
+
+/// Parse sockaddr_storage to IpAddr
+#[cfg(unix)]
+fn parse_sockaddr_storage(storage: &libc::sockaddr_storage) -> Result<IpAddr> {
+    match storage.ss_family as libc::c_int {
+        libc::AF_INET => {
+            let addr: &libc::sockaddr_in = unsafe { &*(storage as *const _ as *const _) };
+            let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+            Ok(IpAddr::V4(ip))
+        }
+        libc::AF_INET6 => {
+            let addr: &libc::sockaddr_in6 = unsafe { &*(storage as *const _ as *const _) };
+            let ip = std::net::Ipv6Addr::from(addr.sin6_addr.s6_addr);
+            Ok(IpAddr::V6(ip))
+        }
+        _ => Err(anyhow!("Unknown address family: {}", storage.ss_family)),
+    }
 }
 
 // ============================================================================
@@ -255,6 +398,17 @@ pub fn create_recv_socket_with_interface(
     if let Some(info) = interface {
         bind_socket_to_interface(&socket, info)?;
     }
+
+    // Enable TTL reception for asymmetric routing detection
+    // This is best-effort - continue without if it fails
+    #[cfg(unix)]
+    if let Err(e) = enable_recv_ttl(&socket, ipv6) {
+        // Only warn in debug mode - this is expected to fail in some environments
+        #[cfg(debug_assertions)]
+        eprintln!("Note: Could not enable TTL reception: {}", e);
+        let _ = e; // Silence unused warning in release
+    }
+
     Ok(socket)
 }
 

@@ -335,6 +335,72 @@ impl Widget for HopDetailView<'_> {
                 }
             }
 
+            // Asymmetric routing detection
+            if let Some(ref asym) = self.hop.asymmetry {
+                let total = asym.symmetric_samples + asym.asymmetric_samples;
+                if total >= 5 || asym.suspected {
+                    lines.push(Line::from(""));
+                    if asym.suspected {
+                        lines.push(Line::from(vec![Span::styled(
+                            "  Routing Asymmetry Detected",
+                            Style::default().fg(self.theme.warning),
+                        )]));
+                    } else {
+                        lines.push(Line::from(vec![Span::styled(
+                            "  Routing Symmetry",
+                            Style::default().fg(self.theme.text_dim),
+                        )]));
+                    }
+                    lines.push(Line::from(vec![
+                        Span::styled("  Forward hops: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{}", self.hop.ttl)),
+                        Span::styled(
+                            "  Est. return: ",
+                            Style::default().fg(self.theme.text_dim),
+                        ),
+                        Span::raw(
+                            asym.last_return_hops
+                                .map(|h| h.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                        ),
+                        Span::styled("  Diff: ", Style::default().fg(self.theme.text_dim)),
+                        if asym.avg_hop_difference.abs() >= 3.0 {
+                            Span::styled(
+                                format!("{:.1}", asym.avg_hop_difference),
+                                Style::default().fg(self.theme.warning),
+                            )
+                        } else {
+                            Span::raw(format!("{:.1}", asym.avg_hop_difference))
+                        },
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled("  Samples: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{}", total)),
+                        Span::styled("  Symmetric: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            format!("{}", asym.symmetric_samples),
+                            Style::default().fg(self.theme.success),
+                        ),
+                        Span::styled("  Asymmetric: ", Style::default().fg(self.theme.text_dim)),
+                        if asym.asymmetric_samples > 0 {
+                            Span::styled(
+                                format!("{}", asym.asymmetric_samples),
+                                Style::default().fg(self.theme.warning),
+                            )
+                        } else {
+                            Span::raw("0".to_string())
+                        },
+                    ]));
+                    // High variance indicates return-path ECMP
+                    if asym.variance > 4.0 {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Note: ", Style::default().fg(self.theme.text_dim)),
+                            Span::raw("High variance - possible return-path ECMP"),
+                        ]));
+                    }
+                }
+            }
+
             // Per-flow paths (Paris/Dublin traceroute ECMP detection)
             if !self.hop.flow_paths.is_empty() && self.hop.has_ecmp() {
                 lines.push(Line::from(""));

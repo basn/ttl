@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Minimum 5 responses before recording flaps (avoids startup noise)
   - Disabled in multi-flow mode (`--flows > 1`) where path changes are expected
   - History capped at 50 changes per hop
+- **Asymmetric routing detection**: Detect when return path differs from forward path
+  - Extracts response TTL from ICMP packets using `recvmsg()` with `IP_RECVTTL`/`IPV6_RECVHOPLIMIT`
+  - Estimates return hops using common initial TTL defaults (64, 128, 255)
+  - Compares forward TTL vs estimated return hops to detect asymmetry
+  - Flags asymmetry when difference >= 3 hops in >50% of samples (minimum 5 samples)
+  - Title bar shows `[ASYM]` indicator when any hop has asymmetric routing detected
+  - Main table shows "~" after hostname when asymmetry suspected at that hop
+  - Hop detail view shows routing symmetry section: forward hops, return hops, confidence
+  - High variance in return hops suggests return-path ECMP
+  - Disabled in multi-flow mode (like route flap detection)
 
 ### Fixed
 - **PeeringDB pagination**: Added `limit=0` to API requests to fetch all IX records
