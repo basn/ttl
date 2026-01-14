@@ -43,7 +43,13 @@ See [docs/FEATURES.md](docs/FEATURES.md) for detailed feature documentation.
 
 ## Installation
 
-### Homebrew (macOS/Linux)
+### Quick Install (macOS/Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lance0/ttl/master/install.sh | sh
+```
+
+### Homebrew
 
 ```bash
 brew install lance0/tap/ttl
