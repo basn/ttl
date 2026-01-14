@@ -1449,5 +1449,13 @@ mod tests {
             set_icmp_checksum(&mut packet);
             prop_assert!(validate_icmp_checksum(&packet));
         }
+
+        /// Packets too short for valid IP headers should return None
+        #[test]
+        fn proptest_short_packets_return_none(size in 0usize..20) {
+            let data = vec![0x45u8; size]; // IPv4 version nibble but too short
+            let responder = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
+            prop_assert!(parse_icmp_response(&data, responder, 0x1234).is_none());
+        }
     }
 }
