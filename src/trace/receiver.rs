@@ -103,7 +103,9 @@ impl Receiver {
         } else {
             self.config.interface.as_ref()
         };
-        let socket = create_recv_socket_with_interface(self.config.ipv6, effective_interface)?;
+        let socket_info = create_recv_socket_with_interface(self.config.ipv6, effective_interface)?;
+        let is_dgram = socket_info.is_dgram;
+        let socket = socket_info.socket;
 
         // Set non-blocking with short timeout for polling
         socket.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -137,6 +139,7 @@ impl Receiver {
                             &buffer[..recv_result.len],
                             recv_result.source,
                             identifier,
+                            is_dgram,
                         ) {
                             // Derive flow_id from source port in ICMP error payload
                             // For UDP/TCP: src_port = src_port_base + flow_id

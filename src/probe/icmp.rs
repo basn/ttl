@@ -6,7 +6,7 @@ use pnet::packet::icmp::{IcmpCode, IcmpTypes, checksum};
 pub const ICMP_HEADER_SIZE: usize = 8;
 /// Default payload size (standard ping)
 pub const DEFAULT_PAYLOAD_SIZE: usize = 56;
-/// Minimum payload size (just timestamp)
+/// Minimum payload size (4 bytes ProbeId + 4 bytes timestamp)
 pub const MIN_PAYLOAD_SIZE: usize = 8;
 
 /// Get process identifier for ICMP identification field
@@ -15,6 +15,12 @@ pub fn get_identifier() -> u16 {
 }
 
 /// Build an ICMP Echo Request packet with configurable payload size
+///
+/// Payload layout (for macOS DGRAM correlation fallback):
+/// - Bytes 0-1: identifier (backup for kernel override on macOS DGRAM sockets)
+/// - Bytes 2-3: sequence (backup for kernel override)
+/// - Bytes 4-7: timestamp (lower 32 bits)
+/// - Bytes 8+: pattern fill
 pub fn build_echo_request(identifier: u16, sequence: u16, payload_size: usize) -> Vec<u8> {
     let payload_size = payload_size.max(MIN_PAYLOAD_SIZE);
     let packet_size = ICMP_HEADER_SIZE + payload_size;
@@ -27,15 +33,20 @@ pub fn build_echo_request(identifier: u16, sequence: u16, payload_size: usize) -
     packet.set_identifier(identifier);
     packet.set_sequence_number(sequence);
 
-    // Fill payload with timestamp or pattern
+    // Fill payload
     let payload = packet.payload_mut();
+
+    // Embed identifier and sequence at bytes 0-3 for macOS DGRAM fallback
+    // (kernel may override ICMP header identifier on DGRAM sockets)
+    payload[0..2].copy_from_slice(&identifier.to_be_bytes());
+    payload[2..4].copy_from_slice(&sequence.to_be_bytes());
+
+    // Put timestamp in bytes 4-7 (lower 32 bits)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_micros() as u64;
-
-    // Put timestamp in first 8 bytes
-    payload[..8].copy_from_slice(&timestamp.to_be_bytes());
+        .as_micros() as u32;
+    payload[4..8].copy_from_slice(&timestamp.to_be_bytes());
 
     // Fill rest with pattern
     for (i, byte) in payload[8..].iter_mut().enumerate() {

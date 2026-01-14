@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-01-14
+
+### Fixed
+- **macOS traceroute**: Fix ICMP traceroute showing only 1 hop on macOS
+  - Use `SOCK_DGRAM` instead of `SOCK_RAW` for ICMP sockets on macOS
+  - macOS raw sockets don't support `IP_TTL` setsockopt, preventing TTL manipulation
+  - DGRAM sockets allow setting TTL per-packet for proper traceroute functionality
+  - Added DGRAM-aware packet parsing (no IP header in received packets)
+  - Embedded ProbeId in ICMP payload for correlation fallback (macOS may override identifier)
+
 ## [0.10.3] - 2026-01-14
 
 ### Changed

@@ -150,6 +150,9 @@ fn validate_icmp_checksum(data: &[u8]) -> bool {
 
 /// Parse an ICMP response and correlate it to our probe
 ///
+/// When `is_dgram` is true, the packet starts directly at the ICMP header
+/// (no IP header, as returned by macOS DGRAM sockets).
+///
 /// Returns None if:
 /// - Packet is malformed
 /// - Packet is not a response to our probe (wrong identifier)
@@ -158,18 +161,27 @@ pub fn parse_icmp_response(
     data: &[u8],
     responder: IpAddr,
     our_identifier: u16,
+    is_dgram: bool,
 ) -> Option<ParsedResponse> {
-    // Detect IP version from first nibble
     if data.is_empty() {
         return None;
     }
 
-    let ip_version = (data[0] >> 4) & 0x0F;
-
-    match ip_version {
-        4 => parse_icmp_response_v4(data, responder, our_identifier),
-        6 => parse_icmp_response_v6(data, responder, our_identifier),
-        _ => None,
+    if is_dgram {
+        // DGRAM socket: no IP header, use responder address to determine version
+        if responder.is_ipv4() {
+            parse_icmp_response_v4_dgram(data, responder, our_identifier)
+        } else {
+            parse_icmp_response_v6_dgram(data, responder, our_identifier)
+        }
+    } else {
+        // RAW socket: has IP header, detect version from first nibble
+        let ip_version = (data[0] >> 4) & 0x0F;
+        match ip_version {
+            4 => parse_icmp_response_v4(data, responder, our_identifier),
+            6 => parse_icmp_response_v6(data, responder, our_identifier),
+            _ => None,
+        }
     }
 }
 
@@ -647,6 +659,406 @@ fn parse_icmp_error_payload_v6_with_mtu(
     }
 }
 
+// ============================================================================
+// DGRAM socket parsing (no IP header - used on macOS)
+// ============================================================================
+
+/// Helper to extract identifier from payload (fallback for macOS DGRAM id override)
+/// Payload layout: [0-1] identifier, [2-3] sequence, [4-7] timestamp
+fn extract_id_from_payload(payload: &[u8], our_identifier: u16) -> Option<(u16, u16)> {
+    if payload.len() < 4 {
+        return None;
+    }
+    let payload_id = u16::from_be_bytes([payload[0], payload[1]]);
+    let payload_seq = u16::from_be_bytes([payload[2], payload[3]]);
+    if payload_id == our_identifier {
+        Some((payload_id, payload_seq))
+    } else {
+        None
+    }
+}
+
+/// Parse IPv4 ICMP from DGRAM socket (no IP header)
+fn parse_icmp_response_v4_dgram(
+    icmp_data: &[u8],
+    responder: IpAddr,
+    our_identifier: u16,
+) -> Option<ParsedResponse> {
+    if icmp_data.len() < 8 {
+        return None;
+    }
+
+    let icmp_type = icmp_data[0];
+    let icmp_code = icmp_data[1];
+
+    match icmp_type {
+        0 => {
+            // Echo Reply
+            // Validate checksum
+            if !validate_icmp_checksum(icmp_data) {
+                return None;
+            }
+
+            // Try header identifier first
+            let identifier = u16::from_be_bytes([icmp_data[4], icmp_data[5]]);
+            let sequence = u16::from_be_bytes([icmp_data[6], icmp_data[7]]);
+
+            if identifier == our_identifier {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(sequence),
+                    response_type: IcmpResponseType::EchoReply,
+                    mpls_labels: None,
+                    src_port: None,
+                    mtu: None,
+                    quoted_ttl: None,
+                });
+            }
+
+            // Fallback: check payload bytes 0-3 (macOS may override identifier)
+            // ICMP header is 8 bytes, payload starts at icmp_data[8]
+            if icmp_data.len() >= 12
+                && let Some((_, payload_seq)) =
+                    extract_id_from_payload(&icmp_data[8..], our_identifier)
+            {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(payload_seq),
+                    response_type: IcmpResponseType::EchoReply,
+                    mpls_labels: None,
+                    src_port: None,
+                    mtu: None,
+                    quoted_ttl: None,
+                });
+            }
+            None
+        }
+        11 => {
+            // Time Exceeded
+            parse_icmp_error_payload_v4_dgram(
+                icmp_data,
+                responder,
+                our_identifier,
+                IcmpResponseType::TimeExceeded(icmp_code),
+                None,
+            )
+        }
+        3 => {
+            // Destination Unreachable
+            let mtu = if icmp_code == 4 && icmp_data.len() >= 8 {
+                let mtu_val = u16::from_be_bytes([icmp_data[6], icmp_data[7]]);
+                if mtu_val > 0 { Some(mtu_val) } else { None }
+            } else {
+                None
+            };
+            parse_icmp_error_payload_v4_dgram(
+                icmp_data,
+                responder,
+                our_identifier,
+                IcmpResponseType::DestUnreachable(icmp_code),
+                mtu,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Parse ICMP error (Time Exceeded, Dest Unreachable) from DGRAM socket
+fn parse_icmp_error_payload_v4_dgram(
+    icmp_data: &[u8],
+    responder: IpAddr,
+    our_identifier: u16,
+    response_type: IcmpResponseType,
+    mtu: Option<u16>,
+) -> Option<ParsedResponse> {
+    // ICMP error: [0-7] ICMP header, [8..] original IP packet
+    if icmp_data.len() < 8 + 20 + 8 {
+        return None;
+    }
+
+    let icmp_length = icmp_data[5];
+    let original_ip_data = &icmp_data[8..];
+    let original_ip = Ipv4Packet::new(original_ip_data)?;
+    let orig_ihl = (original_ip.get_header_length() as usize) * 4;
+    let orig_protocol = original_ip.get_next_level_protocol().0;
+    let quoted_ttl = original_ip.get_ttl();
+
+    if original_ip_data.len() < orig_ihl + 8 {
+        return None;
+    }
+
+    let original_payload = &original_ip_data[orig_ihl..];
+    let mpls_labels = parse_icmp_extensions_with_length(&icmp_data[8..], icmp_length);
+
+    match orig_protocol {
+        IPPROTO_ICMP => {
+            if original_payload[0] != 8 {
+                return None;
+            }
+
+            // Try header identifier first
+            // Note: macOS DGRAM sockets may override the ICMP identifier. If the identifier
+            // is overwritten AND the router quotes only 8 bytes of the original ICMP (just
+            // the header per RFC 792 minimum), the payload fallback below won't work.
+            // In practice, most modern routers quote more data, and macOS may preserve
+            // the identifier for outgoing packets even in DGRAM mode.
+            let identifier = u16::from_be_bytes([original_payload[4], original_payload[5]]);
+            let sequence = u16::from_be_bytes([original_payload[6], original_payload[7]]);
+
+            if identifier == our_identifier {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(sequence),
+                    response_type,
+                    mpls_labels,
+                    src_port: None,
+                    mtu,
+                    quoted_ttl: Some(quoted_ttl),
+                });
+            }
+
+            // Fallback: check quoted ICMP payload bytes 0-3 for embedded ProbeId
+            // Only works if router quotes at least 12 bytes (ICMP header + 4 payload)
+            // Original ICMP: [0-7] header, [8..] payload
+            if original_payload.len() >= 12
+                && let Some((_, payload_seq)) =
+                    extract_id_from_payload(&original_payload[8..], our_identifier)
+            {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(payload_seq),
+                    response_type,
+                    mpls_labels,
+                    src_port: None,
+                    mtu,
+                    quoted_ttl: Some(quoted_ttl),
+                });
+            }
+            None
+        }
+        IPPROTO_TCP => {
+            if original_payload.len() < 8 {
+                return None;
+            }
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
+            let probe_id = extract_probe_id_from_tcp(original_payload)?;
+
+            Some(ParsedResponse {
+                responder,
+                probe_id,
+                response_type,
+                mpls_labels,
+                src_port: Some(src_port),
+                mtu,
+                quoted_ttl: Some(quoted_ttl),
+            })
+        }
+        IPPROTO_UDP => {
+            if original_payload.len() < 8 + 6 {
+                return None;
+            }
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
+            let udp_payload = &original_payload[8..];
+            let probe_id = extract_probe_id_from_udp_payload(udp_payload)?;
+
+            Some(ParsedResponse {
+                responder,
+                probe_id,
+                response_type,
+                mpls_labels,
+                src_port: Some(src_port),
+                mtu,
+                quoted_ttl: Some(quoted_ttl),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Parse IPv6 ICMPv6 from DGRAM socket (no IP header)
+fn parse_icmp_response_v6_dgram(
+    icmp_data: &[u8],
+    responder: IpAddr,
+    our_identifier: u16,
+) -> Option<ParsedResponse> {
+    if icmp_data.len() < 8 {
+        return None;
+    }
+
+    let icmp_type = icmp_data[0];
+    let icmp_code = icmp_data[1];
+
+    match icmp_type {
+        ICMPV6_ECHO_REPLY => {
+            let identifier = u16::from_be_bytes([icmp_data[4], icmp_data[5]]);
+            let sequence = u16::from_be_bytes([icmp_data[6], icmp_data[7]]);
+
+            if identifier == our_identifier {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(sequence),
+                    response_type: IcmpResponseType::EchoReply,
+                    mpls_labels: None,
+                    src_port: None,
+                    mtu: None,
+                    quoted_ttl: None,
+                });
+            }
+
+            // Fallback: check payload
+            if icmp_data.len() >= 12
+                && let Some((_, payload_seq)) =
+                    extract_id_from_payload(&icmp_data[8..], our_identifier)
+            {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(payload_seq),
+                    response_type: IcmpResponseType::EchoReply,
+                    mpls_labels: None,
+                    src_port: None,
+                    mtu: None,
+                    quoted_ttl: None,
+                });
+            }
+            None
+        }
+        ICMPV6_PACKET_TOO_BIG => {
+            let mtu = if icmp_data.len() >= 8 {
+                let mtu_val =
+                    u32::from_be_bytes([icmp_data[4], icmp_data[5], icmp_data[6], icmp_data[7]]);
+                if mtu_val > 0 && mtu_val <= 65535 {
+                    Some(mtu_val as u16)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            parse_icmp_error_payload_v6_dgram(
+                icmp_data,
+                responder,
+                our_identifier,
+                IcmpResponseType::PacketTooBig,
+                mtu,
+            )
+        }
+        ICMPV6_TIME_EXCEEDED => parse_icmp_error_payload_v6_dgram(
+            icmp_data,
+            responder,
+            our_identifier,
+            IcmpResponseType::TimeExceeded(icmp_code),
+            None,
+        ),
+        ICMPV6_DEST_UNREACHABLE => parse_icmp_error_payload_v6_dgram(
+            icmp_data,
+            responder,
+            our_identifier,
+            IcmpResponseType::DestUnreachable(icmp_code),
+            None,
+        ),
+        _ => None,
+    }
+}
+
+/// Parse ICMPv6 error payload from DGRAM socket
+fn parse_icmp_error_payload_v6_dgram(
+    icmp_data: &[u8],
+    responder: IpAddr,
+    our_identifier: u16,
+    response_type: IcmpResponseType,
+    mtu: Option<u16>,
+) -> Option<ParsedResponse> {
+    const IPV6_HEADER_LEN: usize = 40;
+
+    if icmp_data.len() < 8 + IPV6_HEADER_LEN + 8 {
+        return None;
+    }
+
+    let icmp_length = icmp_data[5];
+    let original_ipv6_data = &icmp_data[8..];
+    let next_header = original_ipv6_data[6];
+    let quoted_ttl = original_ipv6_data[7]; // Hop limit
+    let original_payload = &original_ipv6_data[IPV6_HEADER_LEN..];
+
+    let mpls_labels = parse_icmp_extensions_with_length(&icmp_data[8..], icmp_length);
+
+    match next_header {
+        IPPROTO_ICMPV6 => {
+            if original_payload[0] != ICMPV6_ECHO_REQUEST {
+                return None;
+            }
+
+            let identifier = u16::from_be_bytes([original_payload[4], original_payload[5]]);
+            let sequence = u16::from_be_bytes([original_payload[6], original_payload[7]]);
+
+            if identifier == our_identifier {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(sequence),
+                    response_type,
+                    mpls_labels,
+                    src_port: None,
+                    mtu,
+                    quoted_ttl: Some(quoted_ttl),
+                });
+            }
+
+            // Fallback: check quoted ICMPv6 payload
+            if original_payload.len() >= 12
+                && let Some((_, payload_seq)) =
+                    extract_id_from_payload(&original_payload[8..], our_identifier)
+            {
+                return Some(ParsedResponse {
+                    responder,
+                    probe_id: ProbeId::from_sequence(payload_seq),
+                    response_type,
+                    mpls_labels,
+                    src_port: None,
+                    mtu,
+                    quoted_ttl: Some(quoted_ttl),
+                });
+            }
+            None
+        }
+        IPPROTO_TCP => {
+            if original_payload.len() < 8 {
+                return None;
+            }
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
+            let probe_id = extract_probe_id_from_tcp(original_payload)?;
+
+            Some(ParsedResponse {
+                responder,
+                probe_id,
+                response_type,
+                mpls_labels,
+                src_port: Some(src_port),
+                mtu,
+                quoted_ttl: Some(quoted_ttl),
+            })
+        }
+        IPPROTO_UDP => {
+            if original_payload.len() < 8 + 6 {
+                return None;
+            }
+            let src_port = u16::from_be_bytes([original_payload[0], original_payload[1]]);
+            let udp_payload = &original_payload[8..];
+            let probe_id = extract_probe_id_from_udp_payload(udp_payload)?;
+
+            Some(ParsedResponse {
+                responder,
+                probe_id,
+                response_type,
+                mpls_labels,
+                src_port: Some(src_port),
+                mtu,
+                quoted_ttl: Some(quoted_ttl),
+            })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,7 +1114,7 @@ mod tests {
     #[test]
     fn test_empty_packet_returns_none() {
         let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
-        assert!(parse_icmp_response(&[], responder, 0x1234).is_none());
+        assert!(parse_icmp_response(&[], responder, 0x1234, false).is_none());
     }
 
     #[test]
@@ -710,7 +1122,7 @@ mod tests {
         let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
         // Just an IP version nibble, nothing else
         let truncated = [0x45]; // IPv4, IHL=5
-        assert!(parse_icmp_response(&truncated, responder, 0x1234).is_none());
+        assert!(parse_icmp_response(&truncated, responder, 0x1234, false).is_none());
     }
 
     #[test]
@@ -718,7 +1130,7 @@ mod tests {
         let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
         // IP version 3 doesn't exist
         let invalid = [0x30, 0x00, 0x00, 0x00];
-        assert!(parse_icmp_response(&invalid, responder, 0x1234).is_none());
+        assert!(parse_icmp_response(&invalid, responder, 0x1234, false).is_none());
     }
 
     #[test]
@@ -742,7 +1154,7 @@ mod tests {
         packet[26] = 0x00;
         packet[27] = 0x01;
 
-        assert!(parse_icmp_response(&packet, responder, 0x1234).is_none());
+        assert!(parse_icmp_response(&packet, responder, 0x1234, false).is_none());
     }
 
     #[test]
@@ -772,7 +1184,7 @@ mod tests {
         // Set valid ICMP checksum
         set_icmp_checksum(&mut packet[20..]);
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -815,7 +1227,7 @@ mod tests {
         packet[54] = (seq >> 8) as u8;
         packet[55] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -851,7 +1263,7 @@ mod tests {
         // Set valid ICMP checksum (ICMP starts at offset 24)
         set_icmp_checksum(&mut packet[24..]);
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -887,7 +1299,7 @@ mod tests {
         packet[46] = (seq >> 8) as u8;
         packet[47] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -930,7 +1342,7 @@ mod tests {
         packet[94] = (seq >> 8) as u8;
         packet[95] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -971,7 +1383,7 @@ mod tests {
         packet[54] = (seq >> 8) as u8;
         packet[55] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -1009,7 +1421,7 @@ mod tests {
         packet[54] = (seq >> 8) as u8;
         packet[55] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -1041,7 +1453,7 @@ mod tests {
         packet[53] = 0x34;
 
         // Fragments are rejected (we don't handle reassembly)
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_none());
     }
 
@@ -1070,7 +1482,7 @@ mod tests {
         packet[27] = (seq & 0xFF) as u8;
 
         // Should be rejected due to invalid checksum
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_none());
     }
 
@@ -1103,7 +1515,7 @@ mod tests {
         packet[54] = (seq >> 8) as u8;
         packet[55] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -1230,7 +1642,7 @@ mod tests {
         let label_bytes = label_word.to_be_bytes();
         packet[164..168].copy_from_slice(&label_bytes);
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -1298,7 +1710,7 @@ mod tests {
         let label_bytes = label_word.to_be_bytes();
         packet[84..88].copy_from_slice(&label_bytes);
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
@@ -1336,12 +1748,143 @@ mod tests {
         packet[54] = (seq >> 8) as u8;
         packet[55] = (seq & 0xFF) as u8;
 
-        let result = parse_icmp_response(&packet, responder, our_id);
+        let result = parse_icmp_response(&packet, responder, our_id, false);
         assert!(result.is_some());
 
         let parsed = result.unwrap();
         // Should have no MPLS labels (packet too short)
         assert!(parsed.mpls_labels.is_none());
+    }
+
+    // ========================================================================
+    // DGRAM socket tests (macOS - no IP header in packets)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_echo_reply_dgram() {
+        // DGRAM sockets don't include IP header - packet starts at ICMP
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
+        let our_id = 0x1234;
+
+        // ICMP Echo Reply (no IP header): 8 bytes header + 8 bytes payload
+        let mut packet = vec![0u8; 16];
+
+        // ICMP header
+        packet[0] = 0; // Type: Echo Reply
+        packet[1] = 0; // Code: 0
+        // Checksum will be set below
+        packet[4] = 0x12; // Identifier high byte
+        packet[5] = 0x34; // Identifier low byte
+
+        // Sequence (TTL=10, seq=5)
+        let probe_id = ProbeId::new(10, 5);
+        let seq = probe_id.to_sequence();
+        packet[6] = (seq >> 8) as u8;
+        packet[7] = (seq & 0xFF) as u8;
+
+        // Payload: embedded ProbeId at bytes 0-3 (for macOS DGRAM fallback)
+        packet[8] = 0x12; // Identifier high byte
+        packet[9] = 0x34; // Identifier low byte
+        packet[10] = (seq >> 8) as u8; // Sequence high byte
+        packet[11] = (seq & 0xFF) as u8; // Sequence low byte
+
+        // Set valid ICMP checksum
+        set_icmp_checksum(&mut packet);
+
+        let result = parse_icmp_response(&packet, responder, our_id, true); // is_dgram=true
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.responder, responder);
+        assert_eq!(parsed.probe_id.ttl, 10);
+        assert_eq!(parsed.probe_id.seq, 5);
+        assert_eq!(parsed.response_type, IcmpResponseType::EchoReply);
+    }
+
+    #[test]
+    fn test_parse_time_exceeded_dgram() {
+        // DGRAM sockets don't include outer IP header - packet starts at ICMP
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
+        let our_id = 0xABCD;
+
+        // ICMP Time Exceeded (8) + Original IPv4 (20) + Original ICMP (12) = 40 bytes
+        // Note: 12 bytes of original ICMP to include payload for fallback test
+        let mut packet = vec![0u8; 40];
+
+        // ICMP Time Exceeded header
+        packet[0] = 11; // Type: Time Exceeded
+        packet[1] = 0; // Code: TTL exceeded
+        // Checksum at [2-3] - not validated for error messages
+        // Unused at [4-7]
+
+        // Original IP header (inside ICMP payload at offset 8)
+        packet[8] = 0x45; // Version 4, IHL 5
+        packet[17] = 1; // Protocol: ICMP
+
+        // Original ICMP Echo Request (at offset 28 = 8 + 20)
+        packet[28] = 8; // Type: Echo Request
+        packet[29] = 0; // Code: 0
+        // Checksum at [30-31]
+        packet[32] = 0xAB; // Identifier high byte
+        packet[33] = 0xCD; // Identifier low byte
+
+        // Sequence (TTL=5, seq=3)
+        let probe_id = ProbeId::new(5, 3);
+        let seq = probe_id.to_sequence();
+        packet[34] = (seq >> 8) as u8;
+        packet[35] = (seq & 0xFF) as u8;
+
+        // Original ICMP payload: embedded ProbeId at bytes 0-3 (offset 36-39)
+        packet[36] = 0xAB; // Identifier high byte
+        packet[37] = 0xCD; // Identifier low byte
+        packet[38] = (seq >> 8) as u8;
+        packet[39] = (seq & 0xFF) as u8;
+
+        let result = parse_icmp_response(&packet, responder, our_id, true); // is_dgram=true
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 5);
+        assert_eq!(parsed.probe_id.seq, 3);
+        assert!(matches!(
+            parsed.response_type,
+            IcmpResponseType::TimeExceeded(0)
+        ));
+    }
+
+    #[test]
+    fn test_parse_echo_reply_dgram_payload_fallback() {
+        // Test the payload-based identifier fallback when ICMP header identifier differs
+        let responder = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
+        let our_id = 0x1234;
+
+        let mut packet = vec![0u8; 16];
+
+        // ICMP header with DIFFERENT identifier (simulating macOS override)
+        packet[0] = 0; // Type: Echo Reply
+        packet[1] = 0; // Code: 0
+        packet[4] = 0xFF; // Wrong identifier high byte
+        packet[5] = 0xFF; // Wrong identifier low byte
+
+        let probe_id = ProbeId::new(10, 5);
+        let seq = probe_id.to_sequence();
+        packet[6] = (seq >> 8) as u8;
+        packet[7] = (seq & 0xFF) as u8;
+
+        // Payload: CORRECT identifier (fallback should find this)
+        packet[8] = 0x12; // Identifier high byte
+        packet[9] = 0x34; // Identifier low byte
+        packet[10] = (seq >> 8) as u8;
+        packet[11] = (seq & 0xFF) as u8;
+
+        set_icmp_checksum(&mut packet);
+
+        let result = parse_icmp_response(&packet, responder, our_id, true);
+        assert!(result.is_some());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.probe_id.ttl, 10);
+        assert_eq!(parsed.probe_id.seq, 5);
     }
 
     // ========================================================================
@@ -1402,7 +1945,7 @@ mod tests {
         #[test]
         fn proptest_parse_icmp_no_panic(data in prop::collection::vec(0u8..=255, 0..1500)) {
             let responder = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1));
-            let _ = parse_icmp_response(&data, responder, 0x1234);
+            let _ = parse_icmp_response(&data, responder, 0x1234, false);
         }
 
         /// Packets with random IP version nibbles should not panic
@@ -1414,7 +1957,7 @@ mod tests {
             }
 
             let responder = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
-            let _ = parse_icmp_response(&data, responder, 0x5678);
+            let _ = parse_icmp_response(&data, responder, 0x5678, false);
         }
 
         /// IPv4 packets with various IHL values should not panic
@@ -1438,7 +1981,7 @@ mod tests {
             }
 
             let responder = IpAddr::V4(std::net::Ipv4Addr::new(172, 16, 0, 1));
-            let _ = parse_icmp_response(&data, responder, 0x9999);
+            let _ = parse_icmp_response(&data, responder, 0x9999, false);
         }
 
         /// ICMP checksum validation should handle all byte patterns
@@ -1473,7 +2016,7 @@ mod tests {
         fn proptest_short_packets_return_none(size in 0usize..20) {
             let data = vec![0x45u8; size]; // IPv4 version nibble but too short
             let responder = IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1));
-            prop_assert!(parse_icmp_response(&data, responder, 0x1234).is_none());
+            prop_assert!(parse_icmp_response(&data, responder, 0x1234, false).is_none());
         }
     }
 }

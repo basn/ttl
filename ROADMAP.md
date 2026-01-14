@@ -1,6 +1,6 @@
 # ttl Roadmap
 
-## Current Status (v0.10.0)
+## Current Status (v0.11.0)
 
 ### Core Features
 - [x] ICMP Echo probing with TTL sweep
@@ -48,7 +48,7 @@
 
 ### Platform Support
 - [x] Linux (raw sockets with CAP_NET_RAW or root)
-- [x] macOS (requires root)
+- [x] macOS (requires root, uses DGRAM sockets for proper TTL support)
 - [ ] Windows (not supported - requires WinPcap/Npcap)
 
 ## Planned Features
@@ -121,6 +121,12 @@
 - [ ] DNS resolution timing (separate DNS latency from network latency)
 - [ ] IPv4 + IPv6 simultaneous (happy eyeballs dual-stack testing)
 
+### v0.11.0 - macOS Fix (Released)
+- [x] macOS ICMP traceroute fix (use SOCK_DGRAM for IP_TTL support)
+- [x] DGRAM-aware packet parsing (handle missing IP header)
+- [x] ProbeId payload fallback (handle macOS identifier override)
+- [x] Homebrew formula and curl installer
+
 ### v1.0.0 - BGP & Routing Integration
 - [ ] Looking glass integration (query public route servers)
 - [ ] BGP community display (show communities on path if available)
@@ -156,8 +162,9 @@
 
 ### Infrastructure
 - [x] GitHub Actions CI (build, test, clippy)
-- [x] Binary releases (Linux x86_64/aarch64, macOS x86_64/aarch64)
-- [ ] Homebrew formula
+- [x] Binary releases (Linux x86_64/aarch64, macOS aarch64)
+- [x] Homebrew formula (`brew install lance0/tap/ttl`)
+- [x] Curl installer (`curl -fsSL https://raw.githubusercontent.com/lance0/ttl/master/install.sh | sh`)
 - [ ] AUR package
 
 ### Future Ideas

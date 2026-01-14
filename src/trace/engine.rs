@@ -118,7 +118,8 @@ impl ProbeEngine {
     /// Run ICMP probing mode
     async fn run_icmp(self) -> Result<()> {
         let ipv6 = self.target.is_ipv6();
-        let socket = create_send_socket_with_interface(ipv6, self.interface.as_ref())?;
+        let socket_info = create_send_socket_with_interface(ipv6, self.interface.as_ref())?;
+        let socket = socket_info.socket;
 
         // Bind to specific source IP if configured
         if let Some(source_ip) = self.config.source_ip {

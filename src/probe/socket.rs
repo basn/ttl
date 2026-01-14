@@ -12,9 +12,49 @@ pub enum SocketCapability {
     Dgram,
 }
 
+/// Socket with metadata about type (for DGRAM-aware parsing)
+#[derive(Debug)]
+pub struct SocketInfo {
+    pub socket: Socket,
+    /// True if SOCK_DGRAM (no IP header in received packets)
+    pub is_dgram: bool,
+}
+
 /// Check socket permissions and return capability level
+/// On macOS, prefers DGRAM because RAW sockets don't support IP_TTL setsockopt
+#[cfg(target_os = "macos")]
 pub fn check_permissions() -> Result<SocketCapability> {
-    // Try raw socket first
+    // On macOS, prefer DGRAM because RAW doesn't support IP_TTL for traceroute
+    // Check both IPv4 and IPv6 DGRAM availability
+    let ipv4_dgram = create_dgram_icmp_socket().is_ok();
+    let ipv6_dgram = create_dgram_icmpv6_socket().is_ok();
+
+    if ipv4_dgram {
+        if !ipv6_dgram {
+            eprintln!(
+                "Note: IPv6 DGRAM sockets unavailable; IPv6 traceroute may not work correctly."
+            );
+        }
+        return Ok(SocketCapability::Dgram);
+    }
+
+    // Fall back to RAW (won't work properly for traceroute but may work for other uses)
+    if create_raw_icmp_socket(false).is_ok() {
+        eprintln!("Warning: Using raw sockets on macOS. Traceroute may not work correctly.");
+        return Ok(SocketCapability::Raw);
+    }
+
+    Err(anyhow!(
+        "Insufficient permissions for ICMP sockets.\n\n\
+         Fix: Run with sudo: sudo ttl <target>"
+    ))
+}
+
+/// Check socket permissions and return capability level
+/// On Linux, prefers RAW for full functionality
+#[cfg(not(target_os = "macos"))]
+pub fn check_permissions() -> Result<SocketCapability> {
+    // Try raw socket first (full functionality)
     if create_raw_icmp_socket(false).is_ok() {
         return Ok(SocketCapability::Raw);
     }
@@ -61,7 +101,8 @@ pub fn create_raw_icmp_socket(ipv6: bool) -> Result<Socket> {
     Ok(socket)
 }
 
-/// Create an unprivileged ICMP socket (SOCK_DGRAM)
+/// Create an unprivileged IPv4 ICMP socket (SOCK_DGRAM)
+/// This socket type allows IP_TTL to be set on macOS
 pub fn create_dgram_icmp_socket() -> Result<Socket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4))?;
     socket.set_nonblocking(false)?;
@@ -69,16 +110,66 @@ pub fn create_dgram_icmp_socket() -> Result<Socket> {
     Ok(socket)
 }
 
-/// Create a socket for sending ICMP probes with configurable TTL
-pub fn create_send_socket(ipv6: bool) -> Result<Socket> {
-    let socket = create_raw_icmp_socket(ipv6)?;
-
-    // We'll set TTL per-packet before sending
+/// Create an unprivileged IPv6 ICMPv6 socket (SOCK_DGRAM)
+/// Only used on macOS where SOCK_DGRAM is preferred for IP_TTL support
+#[cfg(target_os = "macos")]
+pub fn create_dgram_icmpv6_socket() -> Result<Socket> {
+    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::ICMPV6))?;
+    socket.set_nonblocking(false)?;
+    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
     Ok(socket)
 }
 
+/// Create DGRAM ICMP socket for either IPv4 or IPv6
+/// Only used on macOS where SOCK_DGRAM is preferred for IP_TTL support
+#[cfg(target_os = "macos")]
+pub fn create_dgram_icmp_socket_any(ipv6: bool) -> Result<Socket> {
+    if ipv6 {
+        create_dgram_icmpv6_socket()
+    } else {
+        create_dgram_icmp_socket()
+    }
+}
+
+/// Create a socket for sending ICMP probes with configurable TTL
+/// On macOS, uses DGRAM socket because RAW sockets don't support IP_TTL
+pub fn create_send_socket(ipv6: bool) -> Result<SocketInfo> {
+    #[cfg(target_os = "macos")]
+    {
+        // Try DGRAM first on macOS (supports IP_TTL)
+        if let Ok(socket) = create_dgram_icmp_socket_any(ipv6) {
+            return Ok(SocketInfo {
+                socket,
+                is_dgram: true,
+            });
+        }
+    }
+
+    // Fall back to RAW (Linux, or macOS if DGRAM fails)
+    let socket = create_raw_icmp_socket(ipv6)?;
+    Ok(SocketInfo {
+        socket,
+        is_dgram: false,
+    })
+}
+
 /// Create a socket for receiving ICMP responses
-pub fn create_recv_socket(ipv6: bool) -> Result<Socket> {
+/// On macOS, uses DGRAM socket for consistency with send socket
+pub fn create_recv_socket(ipv6: bool) -> Result<SocketInfo> {
+    #[cfg(target_os = "macos")]
+    {
+        // Try DGRAM first on macOS (no IP header in received packets)
+        if let Ok(socket) = create_dgram_icmp_socket_any(ipv6) {
+            // Increase receive buffer size for high probe rates
+            let _ = socket.set_recv_buffer_size(1024 * 1024);
+            return Ok(SocketInfo {
+                socket,
+                is_dgram: true,
+            });
+        }
+    }
+
+    // Fall back to RAW (Linux, or macOS if DGRAM fails)
     let socket = create_raw_icmp_socket(ipv6)?;
 
     // Increase receive buffer size for high probe rates
@@ -88,7 +179,10 @@ pub fn create_recv_socket(ipv6: bool) -> Result<Socket> {
         // Continue with default buffer size
     }
 
-    Ok(socket)
+    Ok(SocketInfo {
+        socket,
+        is_dgram: false,
+    })
 }
 
 /// Set TTL on a socket
@@ -382,35 +476,35 @@ use crate::probe::interface::{InterfaceInfo, bind_socket_to_interface};
 pub fn create_send_socket_with_interface(
     ipv6: bool,
     interface: Option<&InterfaceInfo>,
-) -> Result<Socket> {
-    let socket = create_send_socket(ipv6)?;
+) -> Result<SocketInfo> {
+    let socket_info = create_send_socket(ipv6)?;
     if let Some(info) = interface {
-        bind_socket_to_interface(&socket, info)?;
+        bind_socket_to_interface(&socket_info.socket, info)?;
     }
-    Ok(socket)
+    Ok(socket_info)
 }
 
 /// Create a socket for receiving ICMP responses, optionally bound to an interface
 pub fn create_recv_socket_with_interface(
     ipv6: bool,
     interface: Option<&InterfaceInfo>,
-) -> Result<Socket> {
-    let socket = create_recv_socket(ipv6)?;
+) -> Result<SocketInfo> {
+    let socket_info = create_recv_socket(ipv6)?;
     if let Some(info) = interface {
-        bind_socket_to_interface(&socket, info)?;
+        bind_socket_to_interface(&socket_info.socket, info)?;
     }
 
     // Enable TTL reception for asymmetric routing detection
     // This is best-effort - continue without if it fails
     #[cfg(unix)]
-    if let Err(e) = enable_recv_ttl(&socket, ipv6) {
+    if let Err(e) = enable_recv_ttl(&socket_info.socket, ipv6) {
         // Only warn in debug mode - this is expected to fail in some environments
         #[cfg(debug_assertions)]
         eprintln!("Note: Could not enable TTL reception: {}", e);
         let _ = e; // Silence unused warning in release
     }
 
-    Ok(socket)
+    Ok(socket_info)
 }
 
 #[cfg(test)]
