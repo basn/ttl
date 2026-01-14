@@ -45,11 +45,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
-          # macOS x86_64 (Intel runner)
-          - target: x86_64-apple-darwin
-            os: macos-13-large
-            cross: false
-          # macOS aarch64 (Apple Silicon)
+          # macOS aarch64 (Apple Silicon) - Intel Macs no longer supported
           - target: aarch64-apple-darwin
             os: macos-14
             cross: false

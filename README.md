@@ -57,7 +57,6 @@ Download from [GitHub Releases](https://github.com/lance0/ttl/releases):
 |----------|--------|
 | Linux x86_64 | `ttl-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | `ttl-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Intel | `ttl-x86_64-apple-darwin.tar.gz` |
 | macOS Apple Silicon | `ttl-aarch64-apple-darwin.tar.gz` |
 
 ```bash
