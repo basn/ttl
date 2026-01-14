@@ -133,9 +133,11 @@ impl Receiver {
                         self.consecutive_errors = 0;
                         batch_count += 1;
 
-                        if let Some(parsed) =
-                            parse_icmp_response(&buffer[..recv_result.len], recv_result.source, identifier)
-                        {
+                        if let Some(parsed) = parse_icmp_response(
+                            &buffer[..recv_result.len],
+                            recv_result.source,
+                            identifier,
+                        ) {
                             // Derive flow_id from source port in ICMP error payload
                             // For UDP/TCP: src_port = src_port_base + flow_id
                             // For ICMP: src_port is None, flow_id = 0

@@ -5,6 +5,39 @@ use std::time::Duration;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "ttl")]
 #[command(author, version, about, long_about = None)]
+#[command(after_help = "\
+EXAMPLES:
+    Basic tracing:
+        ttl 8.8.8.8
+        ttl google.com cloudflare.com    # Multiple targets
+
+    Protocol selection:
+        ttl -p udp google.com            # UDP probes
+        ttl -p tcp --port 443 host       # TCP to HTTPS
+
+    ECMP path discovery:
+        ttl --flows 4 host               # Discover load-balanced paths
+
+    Path MTU discovery:
+        ttl --pmtud 8.8.8.8              # Find max packet size
+
+    QoS testing:
+        ttl --dscp 46 host               # Test VoIP traffic class
+
+    Export results:
+        ttl -c 100 --json host > out.json
+
+DETECTION INDICATORS:
+    [NAT]  - Source port rewriting detected (affects multi-flow accuracy)
+    [RL?]  - Router rate-limiting ICMP (loss may be artificial)
+    [ASYM] - Asymmetric routing detected (return path differs)
+    [TTL!] - TTL manipulation detected (middlebox modifying TTL)
+    !      - Route flap at this hop (path instability)
+    ~      - Asymmetric routing suspected at this hop
+    ^      - TTL manipulation suspected at this hop
+
+For detailed documentation: https://github.com/lance0/ttl/blob/master/docs/FEATURES.md
+")]
 pub struct Args {
     /// Target hosts to trace (IP address or hostname)
     #[arg(required = true)]

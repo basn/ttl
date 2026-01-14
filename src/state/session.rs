@@ -2040,10 +2040,7 @@ mod tests {
         for _ in 0..3 {
             info.record_response(5, 54, false);
         }
-        assert!(
-            !info.suspected,
-            "Should not flag with insufficient samples"
-        );
+        assert!(!info.suspected, "Should not flag with insufficient samples");
 
         // Add 2 more to reach threshold
         for _ in 0..2 {

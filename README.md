@@ -43,52 +43,55 @@ See [docs/FEATURES.md](docs/FEATURES.md) for detailed feature documentation.
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install lance0/tap/ttl
+```
+
+### Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/lance0/ttl/releases):
+
+| Platform | Target |
+|----------|--------|
+| Linux x86_64 | `ttl-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `ttl-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `ttl-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `ttl-aarch64-apple-darwin.tar.gz` |
+
+```bash
+# Download, verify, and install (Linux x86_64 example)
+curl -LO https://github.com/lance0/ttl/releases/latest/download/ttl-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/lance0/ttl/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing  # macOS: shasum -a 256 -c
+tar xzf ttl-*.tar.gz && sudo mv ttl /usr/local/bin/
+```
+
 ### From crates.io
 
 ```bash
 cargo install ttl
 ```
 
-### From source
+### From Source
 
 ```bash
-cargo install --git https://github.com/lance0/ttl
+git clone https://github.com/lance0/ttl
+cd ttl && cargo build --release
+sudo cp target/release/ttl /usr/local/bin/
 ```
 
-### Pre-built binaries
+### Permissions (Linux)
 
-Download from [GitHub Releases](https://github.com/lance0/ttl/releases):
-
-```bash
-# Download and extract
-curl -LO https://github.com/lance0/ttl/releases/latest/download/ttl-x86_64-unknown-linux-gnu.tar.gz
-curl -LO https://github.com/lance0/ttl/releases/latest/download/SHA256SUMS
-
-# Verify checksum (Linux)
-sha256sum -c SHA256SUMS --ignore-missing
-# Or on macOS:
-shasum -a 256 -c SHA256SUMS --ignore-missing
-
-# Extract and install
-tar xzf ttl-x86_64-unknown-linux-gnu.tar.gz
-sudo mv ttl /usr/local/bin/
-```
-
-Available targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`
-
-### Permissions
-
-Raw sockets require elevated privileges:
+Raw sockets require elevated privileges. The easiest approach is to add the capability once:
 
 ```bash
-# Option 1: Run with sudo
-sudo ttl 1.1.1.1
-
-# Option 2: Add capability (Linux)
+# Add capability (works for any install location)
 sudo setcap cap_net_raw+ep $(which ttl)
 
-# Option 3: Enable unprivileged ICMP (Linux)
-sudo sysctl -w net.ipv4.ping_group_range='0 65534'
+# Then run without sudo:
+ttl 8.8.8.8
 ```
 
 ## Usage Examples
@@ -151,6 +154,21 @@ ttl 1.1.1.1 --theme dracula    # Start with theme
 | macOS | Full support |
 | Windows | Not supported |
 
+## Known Limitations
+
+### Permissions
+- Linux: Requires `CAP_NET_RAW` capability or root (see [Permissions](#permissions-linux))
+- macOS: Requires root (`sudo ttl target`)
+
+### Protocol Limitations
+- ICMP probes: Some networks filter ICMP, try `-p udp` or `-p tcp`
+- TCP probes: Only SYN (no connection establishment)
+- UDP probes: High ports may be filtered by firewalls
+
+### Multi-flow Mode
+- NAT devices may rewrite source ports, breaking flow correlation
+- The `[NAT]` indicator warns when this is detected
+
 ## Documentation
 
 - [Features](docs/FEATURES.md) - Detailed feature documentation and CLI reference
@@ -162,19 +180,34 @@ ttl 1.1.1.1 --theme dracula    # Start with theme
 
 ## Troubleshooting
 
+### "sudo: ttl: command not found"
+
+sudo uses a restricted PATH. Use the full path or copy to a sudo-accessible location:
+
+```bash
+# Option 1: Use full path
+sudo ~/.cargo/bin/ttl 8.8.8.8
+
+# Option 2: Copy to /usr/local/bin (one-time)
+sudo cp ~/.cargo/bin/ttl /usr/local/bin/
+
+# Option 3: Symlink (updates automatically with cargo install)
+sudo ln -sf ~/.cargo/bin/ttl /usr/local/bin/ttl
+```
+
 ### Permission errors
 
-Raw ICMP sockets require `CAP_NET_RAW` or root. See [Permissions](#permissions).
+Raw ICMP sockets require `CAP_NET_RAW` or root. See [Permissions](#permissions-linux).
 
 ### High packet loss
 
 Try increasing probe interval: `ttl target -i 2.0`
 
-Some routers rate-limit or deprioritize ICMP traffic.
+Some routers rate-limit ICMP - look for the `[RL?]` indicator in the TUI.
 
 ### All hops showing `* * *`
 
-Check firewall rules, VPN configuration, or verify target reachability.
+Check firewall rules, VPN configuration, or try a different protocol: `ttl -p udp target`
 
 ## License
 

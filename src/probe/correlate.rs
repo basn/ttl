@@ -217,7 +217,7 @@ fn parse_icmp_response_v4(
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
                 mtu: None,
-                quoted_ttl: None,  // No quoted IP header in Echo Reply
+                quoted_ttl: None, // No quoted IP header in Echo Reply
             })
         }
         IcmpTypes::TimeExceeded => {
@@ -351,7 +351,7 @@ fn parse_icmp_response_v6(
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
                 mtu: None,
-                quoted_ttl: None,  // No quoted IP header in Echo Reply
+                quoted_ttl: None, // No quoted IP header in Echo Reply
             })
         }
         ICMPV6_PACKET_TOO_BIG => {

@@ -354,10 +354,7 @@ impl Widget for HopDetailView<'_> {
                     lines.push(Line::from(vec![
                         Span::styled("  Forward hops: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(format!("{}", self.hop.ttl)),
-                        Span::styled(
-                            "  Est. return: ",
-                            Style::default().fg(self.theme.text_dim),
-                        ),
+                        Span::styled("  Est. return: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(
                             asym.last_return_hops
                                 .map(|h| h.to_string())

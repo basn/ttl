@@ -82,17 +82,9 @@ impl Widget for MainView<'_> {
             .iter()
             .any(|h| h.rate_limit.as_ref().map(|r| r.suspected).unwrap_or(false));
         let rl_warn = if has_rate_limit { " [RL?]" } else { "" };
-        let has_asymmetry = self
-            .session
-            .hops
-            .iter()
-            .any(|h| h.has_asymmetry());
+        let has_asymmetry = self.session.hops.iter().any(|h| h.has_asymmetry());
         let asym_warn = if has_asymmetry { " [ASYM]" } else { "" };
-        let has_ttl_manip = self
-            .session
-            .hops
-            .iter()
-            .any(|h| h.has_ttl_manip());
+        let has_ttl_manip = self.session.hops.iter().any(|h| h.has_ttl_manip());
         let ttl_warn = if has_ttl_manip { " [TTL!]" } else { "" };
 
         // PMTUD status indicator

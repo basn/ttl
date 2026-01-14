@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.10.0] - 2026-01-13
 
+**Highlights**: Path MTU discovery, ICMP rate limit detection, route flap detection, asymmetric routing detection, TTL manipulation detection, and CI/CD automation. Major release for network diagnostic capabilities.
+
 ### Added
 - **Path MTU discovery** (`--pmtud`): Binary search to find maximum unfragmented packet size
   - Uses DF (Don't Fragment) flag to detect MTU limits
