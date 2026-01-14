@@ -60,6 +60,8 @@ struct BatchedResponse {
     reported_mtu: Option<u16>,
     /// TTL/hop-limit from the response IP header (for asymmetry detection)
     response_ttl: Option<u8>,
+    /// Quoted TTL from ICMP error payload (for TTL manipulation detection)
+    quoted_ttl: Option<u8>,
 }
 
 /// The receiver listens for ICMP responses and correlates them to probes
@@ -193,6 +195,7 @@ impl Receiver {
                                     packet_size: probe.packet_size,
                                     reported_mtu: parsed.mtu,
                                     response_ttl: recv_result.response_ttl,
+                                    quoted_ttl: parsed.quoted_ttl,
                                 });
                             } else {
                                 // Late packet arrival - response came after timeout
@@ -267,6 +270,15 @@ impl Receiver {
                                 && let Some(ttl) = resp.response_ttl
                             {
                                 hop.record_response_ttl(ttl, self.config.ipv6);
+                            }
+
+                            // TTL manipulation detection (TimeExceeded code 0 only, all flow modes)
+                            // Code 0 = TTL exceeded in transit, Code 1 = fragment reassembly exceeded
+                            // Only code 0 is relevant for TTL manipulation - code 1 can have quoted TTL > 1
+                            if matches!(resp.response_type, IcmpResponseType::TimeExceeded(0))
+                                && let Some(quoted) = resp.quoted_ttl
+                            {
+                                hop.record_ttl_manip_check(quoted);
                             }
                         }
 

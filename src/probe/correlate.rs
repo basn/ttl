@@ -34,6 +34,9 @@ pub struct ParsedResponse {
     /// MTU from ICMP Fragmentation Needed (Type 3 Code 4) or ICMPv6 Packet Too Big (Type 2)
     /// Used for Path MTU Discovery
     pub mtu: Option<u16>,
+    /// TTL from quoted IP header in ICMP error (for TTL manipulation detection)
+    /// For Time Exceeded, this should be 0 or 1 per RFC; values > 1 suggest manipulation
+    pub quoted_ttl: Option<u8>,
 }
 
 // ICMP extension constants (RFC 4884, RFC 4950)
@@ -214,15 +217,19 @@ fn parse_icmp_response_v4(
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
                 mtu: None,
+                quoted_ttl: None,  // No quoted IP header in Echo Reply
             })
         }
-        IcmpTypes::TimeExceeded => parse_icmp_error_payload_v4_with_mtu(
-            icmp_data,
-            responder,
-            our_identifier,
-            IcmpResponseType::TimeExceeded,
-            None,
-        ),
+        IcmpTypes::TimeExceeded => {
+            let code = icmp_packet.get_icmp_code().0;
+            parse_icmp_error_payload_v4_with_mtu(
+                icmp_data,
+                responder,
+                our_identifier,
+                IcmpResponseType::TimeExceeded(code),
+                None,
+            )
+        }
         IcmpTypes::DestinationUnreachable => {
             let code = icmp_packet.get_icmp_code().0;
             // For Fragmentation Needed (code 4), extract MTU from bytes 6-7
@@ -344,6 +351,7 @@ fn parse_icmp_response_v6(
                 mpls_labels: None, // Echo Reply doesn't have extensions
                 src_port: None,    // ICMP has no source port
                 mtu: None,
+                quoted_ttl: None,  // No quoted IP header in Echo Reply
             })
         }
         ICMPV6_PACKET_TOO_BIG => {
@@ -372,7 +380,7 @@ fn parse_icmp_response_v6(
             icmp_data,
             responder,
             our_identifier,
-            IcmpResponseType::TimeExceeded,
+            IcmpResponseType::TimeExceeded(icmp_code),
             None,
         ),
         ICMPV6_DEST_UNREACHABLE => parse_icmp_error_payload_v6_with_mtu(
@@ -417,6 +425,8 @@ fn parse_icmp_error_payload_v4_with_mtu(
     let original_ip = Ipv4Packet::new(original_ip_data)?;
     let orig_ihl = (original_ip.get_header_length() as usize) * 4;
     let orig_protocol = original_ip.get_next_level_protocol().0;
+    // Extract quoted TTL for TTL manipulation detection
+    let quoted_ttl = original_ip.get_ttl();
 
     if original_ip_data.len() < orig_ihl + 8 {
         return None;
@@ -456,6 +466,7 @@ fn parse_icmp_error_payload_v4_with_mtu(
                 mpls_labels,
                 src_port: None, // ICMP has no source port
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         IPPROTO_TCP => {
@@ -479,6 +490,7 @@ fn parse_icmp_error_payload_v4_with_mtu(
                 mpls_labels,
                 src_port: Some(src_port),
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         IPPROTO_UDP => {
@@ -503,6 +515,7 @@ fn parse_icmp_error_payload_v4_with_mtu(
                 mpls_labels,
                 src_port: Some(src_port),
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         _ => None,
@@ -542,6 +555,8 @@ fn parse_icmp_error_payload_v6_with_mtu(
     let original_ipv6_data = &icmp_data[8..];
     // Next header field is at byte 6 of IPv6 header
     let next_header = original_ipv6_data[6];
+    // Hop limit (IPv6 equivalent of TTL) is at byte 7
+    let quoted_ttl = original_ipv6_data[7];
     let original_payload = &original_ipv6_data[IPV6_HEADER_LEN..];
 
     // Try to parse ICMP extensions using RFC 4884 length field
@@ -576,6 +591,7 @@ fn parse_icmp_error_payload_v6_with_mtu(
                 mpls_labels,
                 src_port: None, // ICMP has no source port
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         IPPROTO_TCP => {
@@ -599,6 +615,7 @@ fn parse_icmp_error_payload_v6_with_mtu(
                 mpls_labels,
                 src_port: Some(src_port),
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         IPPROTO_UDP => {
@@ -623,6 +640,7 @@ fn parse_icmp_error_payload_v6_with_mtu(
                 mpls_labels,
                 src_port: Some(src_port),
                 mtu,
+                quoted_ttl: Some(quoted_ttl),
             })
         }
         _ => None,
@@ -803,7 +821,7 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.probe_id.ttl, 5);
         assert_eq!(parsed.probe_id.seq, 3);
-        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded);
+        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded(0));
     }
 
     #[test]
@@ -918,7 +936,7 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.probe_id.ttl, 6);
         assert_eq!(parsed.probe_id.seq, 2);
-        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded);
+        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded(0));
     }
 
     #[test]
@@ -1218,7 +1236,7 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.probe_id.ttl, 5);
         assert_eq!(parsed.probe_id.seq, 1);
-        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded);
+        assert_eq!(parsed.response_type, IcmpResponseType::TimeExceeded(0));
 
         // Verify MPLS labels were parsed
         assert!(parsed.mpls_labels.is_some());

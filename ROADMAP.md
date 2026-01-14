@@ -116,10 +116,10 @@
 - [x] Rate limit detection (identify ICMP rate limiting, explain misleading loss%)
 - [x] Asymmetric routing detection (compare forward path TTLs in responses)
 - [x] Route flap/change detection (alert on path changes, show in TUI)
+- [x] TTL manipulation detection (identify middlebox TTL changes via quoted TTL analysis)
 - [ ] Packet loss pattern analysis (bursty vs random loss classification)
 - [ ] DNS resolution timing (separate DNS latency from network latency)
 - [ ] IPv4 + IPv6 simultaneous (happy eyeballs dual-stack testing)
-- [ ] TTL manipulation detection (identify middlebox TTL changes)
 
 ### v1.0.0 - BGP & Routing Integration
 - [ ] Looking glass integration (query public route servers)

@@ -401,6 +401,65 @@ impl Widget for HopDetailView<'_> {
                 }
             }
 
+            // TTL manipulation detection
+            if let Some(ref ttl_info) = self.hop.ttl_manip {
+                let total = ttl_info.normal_samples + ttl_info.anomalous_samples;
+                if total >= 5 || ttl_info.suspected {
+                    lines.push(Line::from(""));
+                    let header_style = if ttl_info.suspected {
+                        Style::default().fg(self.theme.warning)
+                    } else {
+                        Style::default().fg(self.theme.text_dim)
+                    };
+                    lines.push(Line::from(vec![Span::styled(
+                        if ttl_info.suspected {
+                            "  TTL Manipulation Detected"
+                        } else {
+                            "  TTL Behavior"
+                        },
+                        header_style,
+                    )]));
+
+                    if let Some(ref reason) = ttl_info.reason {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Reason: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(reason.clone(), Style::default().fg(self.theme.warning)),
+                        ]));
+                    }
+
+                    lines.push(Line::from(vec![
+                        Span::styled("  Sent TTL: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{}", self.hop.ttl)),
+                        Span::styled("  Last Quoted: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(
+                            ttl_info
+                                .last_quoted_ttl
+                                .map(|t| t.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                        ),
+                    ]));
+
+                    lines.push(Line::from(vec![
+                        Span::styled("  Samples: ", Style::default().fg(self.theme.text_dim)),
+                        Span::raw(format!("{}", total)),
+                        Span::styled("  Normal: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            format!("{}", ttl_info.normal_samples),
+                            Style::default().fg(self.theme.success),
+                        ),
+                        Span::styled("  Anomalous: ", Style::default().fg(self.theme.text_dim)),
+                        if ttl_info.anomalous_samples > 0 {
+                            Span::styled(
+                                format!("{}", ttl_info.anomalous_samples),
+                                Style::default().fg(self.theme.warning),
+                            )
+                        } else {
+                            Span::raw("0".to_string())
+                        },
+                    ]));
+                }
+            }
+
             // Per-flow paths (Paris/Dublin traceroute ECMP detection)
             if !self.hop.flow_paths.is_empty() && self.hop.has_ecmp() {
                 lines.push(Line::from(""));

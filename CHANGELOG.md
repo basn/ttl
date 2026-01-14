@@ -80,6 +80,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hop detail view shows routing symmetry section: forward hops, return hops, confidence
   - High variance in return hops suggests return-path ECMP
   - Disabled in multi-flow mode (like route flap detection)
+- **TTL manipulation detection**: Detect middleboxes that modify IP TTL values
+  - Analyzes quoted TTL in ICMP Time Exceeded (code 0) responses only
+  - Code 0 = TTL exceeded in transit; code 1 = fragment reassembly exceeded (ignored)
+  - Per RFC 1812, quoted TTL should be 0 or 1 (post-decrement or pre-decrement)
+  - Detects: transparent proxies (quoted TTL == sent TTL), abnormal quoted TTL > 1
+  - Hop 1 guard: avoids false positive when sent_ttl=1 and quoted_ttl=1 (normal pre-decrement)
+  - Title bar shows `[TTL!]` indicator when manipulation detected
+  - Main table shows "^" after hostname at affected hops
+  - Hop detail view shows: sent TTL, last quoted TTL, normal/anomalous sample counts
+  - Works in both single-flow and multi-flow modes (unlike asymmetry/flap detection)
+  - Hysteresis clearing resets anomaly counters to prevent re-triggering
 
 ### Fixed
 - **PeeringDB pagination**: Added `limit=0` to API requests to fetch all IX records

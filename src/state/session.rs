@@ -36,7 +36,8 @@ impl ProbeId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IcmpResponseType {
     EchoReply,
-    TimeExceeded,
+    /// Time Exceeded (ICMP type 11). Code 0 = TTL exceeded, Code 1 = fragment reassembly exceeded
+    TimeExceeded(u8),
     DestUnreachable(u8),
     /// ICMPv6 Type 2 - Packet Too Big (for PMTUD)
     PacketTooBig,
@@ -542,6 +543,106 @@ fn estimate_return_hops(response_ttl: u8, _ipv6: bool) -> u8 {
     init_ttl.saturating_sub(response_ttl)
 }
 
+/// TTL manipulation detection info for a hop
+///
+/// Detects middleboxes (firewalls, proxies, NAT, MPLS tunnels) that manipulate
+/// IP TTL values by analyzing the quoted TTL in ICMP Time Exceeded payloads.
+/// Per RFC, quoted TTL should be 0 or 1 (post-decrement or pre-decrement);
+/// values > 1 suggest manipulation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TtlManipInfo {
+    /// Samples where quoted TTL was normal (0 or 1)
+    pub normal_samples: u64,
+    /// Samples where quoted TTL was > 1 (anomalous)
+    pub anomalous_samples: u64,
+    /// Samples where quoted TTL == sent TTL and sent > 1 (no decrement - transparent proxy)
+    pub no_decrement_samples: u64,
+    /// Whether manipulation is suspected
+    pub suspected: bool,
+    /// Confidence score (0.0 - 1.0)
+    pub confidence: f64,
+    /// Human-readable reason for detection
+    pub reason: Option<String>,
+    /// Last observed quoted TTL value
+    pub last_quoted_ttl: Option<u8>,
+    /// Hysteresis counter for clearing suspected state
+    #[serde(default)]
+    negative_checks: u8,
+}
+
+impl TtlManipInfo {
+    const MIN_SAMPLES: u64 = 5;
+    /// Anomaly rate threshold for detection (30%)
+    const ANOMALY_THRESHOLD: f64 = 0.3;
+    /// Consecutive normal samples needed to clear detection
+    const CLEAR_THRESHOLD: u8 = 10;
+
+    /// Record a quoted TTL sample from a Time Exceeded response
+    pub fn record_sample(&mut self, sent_ttl: u8, quoted_ttl: u8) {
+        self.last_quoted_ttl = Some(quoted_ttl);
+
+        // Check quoted TTL anomaly (should be 0 or 1 for TimeExceeded)
+        if quoted_ttl > 1 {
+            self.anomalous_samples += 1;
+            self.negative_checks = 0;
+        } else {
+            self.normal_samples += 1;
+            if self.suspected {
+                self.negative_checks = self.negative_checks.saturating_add(1);
+            }
+        }
+
+        // Special case: no decrement (must guard for hop 1)
+        // sent_ttl > 1 ensures we don't false-positive on hop 1 pre-decrement
+        if quoted_ttl == sent_ttl && sent_ttl > 1 {
+            self.no_decrement_samples += 1;
+            self.negative_checks = 0;
+        }
+
+        // Update detection state
+        self.update_detection();
+    }
+
+    fn update_detection(&mut self) {
+        let total = self.normal_samples + self.anomalous_samples;
+
+        // Clear if enough consecutive normal samples
+        if self.negative_checks >= Self::CLEAR_THRESHOLD {
+            self.suspected = false;
+            self.confidence = 0.0;
+            self.reason = None;
+            self.negative_checks = 0;
+            // Reset counters so historical anomalies don't immediately re-trigger
+            self.anomalous_samples = 0;
+            self.no_decrement_samples = 0;
+            return;
+        }
+
+        if total >= Self::MIN_SAMPLES {
+            let anomaly_rate = self.anomalous_samples as f64 / total as f64;
+
+            // Trigger if anomaly rate exceeds threshold OR any no-decrement samples
+            if anomaly_rate >= Self::ANOMALY_THRESHOLD || self.no_decrement_samples > 0 {
+                self.suspected = true;
+                self.confidence = if self.no_decrement_samples > 0 {
+                    0.9 // High confidence for no-decrement
+                } else {
+                    0.5 + (anomaly_rate * 0.4).min(0.4) // 0.5-0.9 based on rate
+                };
+                self.reason = Some(self.build_reason());
+            }
+        }
+    }
+
+    fn build_reason(&self) -> String {
+        if self.no_decrement_samples > 0 {
+            "TTL not decremented (transparent proxy?)".to_string()
+        } else {
+            format!("Quoted TTL > 1 in {} samples", self.anomalous_samples)
+        }
+    }
+}
+
 /// Rate limit detection info for a hop
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RateLimitInfo {
@@ -717,6 +818,9 @@ pub struct Hop {
     /// Asymmetric routing detection information for this hop
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asymmetry: Option<AsymmetryInfo>,
+    /// TTL manipulation detection information for this hop
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_manip: Option<TtlManipInfo>,
     /// Internal: tracks primary with hysteresis for flap detection only
     /// (separate from `primary` which always reflects true most-frequent)
     #[serde(skip)]
@@ -745,6 +849,7 @@ impl Hop {
             rate_limit: None,
             route_changes: Vec::new(),
             asymmetry: None,
+            ttl_manip: None,
             flap_tracking_primary: None,
         }
     }
@@ -990,6 +1095,20 @@ impl Hop {
     pub fn has_asymmetry(&self) -> bool {
         self.asymmetry.as_ref().is_some_and(|a| a.suspected)
     }
+
+    /// Record a TTL manipulation check from TimeExceeded response
+    ///
+    /// The quoted_ttl is the TTL from the quoted IP header in the ICMP error.
+    /// For Time Exceeded, this should be 0 or 1 per RFC; values > 1 suggest manipulation.
+    pub fn record_ttl_manip_check(&mut self, quoted_ttl: u8) {
+        let info = self.ttl_manip.get_or_insert_with(TtlManipInfo::default);
+        info.record_sample(self.ttl, quoted_ttl);
+    }
+
+    /// Returns true if TTL manipulation is suspected at this hop
+    pub fn has_ttl_manip(&self) -> bool {
+        self.ttl_manip.as_ref().is_some_and(|t| t.suspected)
+    }
 }
 
 /// Target being traced
@@ -1117,6 +1236,7 @@ impl Session {
             hop.rate_limit = None;
             hop.route_changes.clear();
             hop.asymmetry = None;
+            hop.ttl_manip = None;
             hop.flap_tracking_primary = None;
         }
     }
@@ -1992,5 +2112,115 @@ mod tests {
         // Reset should clear
         session.reset_stats();
         assert!(session.hop(1).unwrap().asymmetry.is_none());
+    }
+
+    #[test]
+    fn test_ttl_manip_normal() {
+        let mut info = TtlManipInfo::default();
+        for _ in 0..10 {
+            info.record_sample(5, 0); // Normal: quoted=0
+        }
+        assert!(!info.suspected);
+        assert_eq!(info.normal_samples, 10);
+        assert_eq!(info.anomalous_samples, 0);
+    }
+
+    #[test]
+    fn test_ttl_manip_anomalous_quoted() {
+        let mut info = TtlManipInfo::default();
+        for _ in 0..10 {
+            info.record_sample(5, 3); // Anomalous: quoted=3 (should be 0 or 1)
+        }
+        assert!(info.suspected);
+        assert_eq!(info.anomalous_samples, 10);
+    }
+
+    #[test]
+    fn test_ttl_manip_no_decrement() {
+        let mut info = TtlManipInfo::default();
+        for _ in 0..10 {
+            info.record_sample(5, 5); // No decrement: quoted=sent
+        }
+        assert!(info.suspected);
+        assert!(info.no_decrement_samples > 0);
+        assert!(info.confidence >= 0.9);
+    }
+
+    #[test]
+    fn test_ttl_manip_hop1_not_false_positive() {
+        let mut info = TtlManipInfo::default();
+        for _ in 0..10 {
+            info.record_sample(1, 1); // Hop 1: sent=1, quoted=1 is NORMAL
+        }
+        assert!(!info.suspected); // Should NOT trigger
+        assert_eq!(info.no_decrement_samples, 0); // Guarded by sent_ttl > 1
+    }
+
+    #[test]
+    fn test_ttl_manip_min_samples() {
+        let mut info = TtlManipInfo::default();
+        for _ in 0..3 {
+            info.record_sample(5, 5);
+        }
+        assert!(!info.suspected); // Not enough samples yet
+    }
+
+    #[test]
+    fn test_ttl_manip_hysteresis_clear() {
+        let mut info = TtlManipInfo::default();
+        // Trigger detection with anomalous samples
+        for _ in 0..10 {
+            info.record_sample(5, 3);
+        }
+        assert!(info.suspected);
+        // Anomaly rate: 10/10 = 100%
+
+        // Add many normal samples to bring anomaly rate well below 30% threshold
+        // The detection can oscillate near the threshold, so we need to go well below.
+        // After 50 normal samples: 10/60 = 16.7% which is comfortably < 30%
+        for _ in 0..50 {
+            info.record_sample(5, 0);
+        }
+        assert!(!info.suspected);
+    }
+
+    #[test]
+    fn test_hop_record_ttl_manip_check() {
+        let mut hop = Hop::new(5);
+        let ip = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1));
+
+        // Record some responses first
+        for _ in 0..10 {
+            hop.record_response(ip, Duration::from_millis(10));
+            hop.record_ttl_manip_check(3); // anomalous
+        }
+
+        assert!(hop.ttl_manip.is_some());
+        let ttl_info = hop.ttl_manip.as_ref().unwrap();
+        assert!(ttl_info.suspected);
+        assert!(hop.has_ttl_manip());
+    }
+
+    #[test]
+    fn test_ttl_manip_reset_clears() {
+        let target = Target::new(
+            "test.com".to_string(),
+            IpAddr::V4(std::net::Ipv4Addr::new(1, 2, 3, 4)),
+        );
+        let config = Config::default();
+        let mut session = Session::new(target, config);
+
+        // Add TTL manipulation data
+        if let Some(hop) = session.hop_mut(1) {
+            for _ in 0..10 {
+                hop.record_ttl_manip_check(3);
+            }
+        }
+
+        assert!(session.hop(1).unwrap().ttl_manip.is_some());
+
+        // Reset should clear
+        session.reset_stats();
+        assert!(session.hop(1).unwrap().ttl_manip.is_none());
     }
 }

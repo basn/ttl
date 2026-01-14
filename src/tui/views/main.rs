@@ -88,6 +88,12 @@ impl Widget for MainView<'_> {
             .iter()
             .any(|h| h.has_asymmetry());
         let asym_warn = if has_asymmetry { " [ASYM]" } else { "" };
+        let has_ttl_manip = self
+            .session
+            .hops
+            .iter()
+            .any(|h| h.has_ttl_manip());
+        let ttl_warn = if has_ttl_manip { " [TTL!]" } else { "" };
 
         // PMTUD status indicator
         let pmtud_status = self
@@ -140,7 +146,7 @@ impl Widget for MainView<'_> {
         };
 
         let title = format!(
-            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}{}",
+            "ttl \u{2500}\u{2500} {}{}{} \u{2500}\u{2500} {} probes \u{2500}\u{2500} {}ms interval{}{}{}{}{}{}",
             target_indicator,
             target_str,
             routing_str,
@@ -150,6 +156,7 @@ impl Widget for MainView<'_> {
             nat_warn,
             rl_warn,
             asym_warn,
+            ttl_warn,
             pmtud_status
         );
 
@@ -207,16 +214,28 @@ impl Widget for MainView<'_> {
                     } else {
                         String::new()
                     };
-                    // Add indicators in single-flow mode
-                    // ! = route flap, ~ = asymmetric routing
+                    // Add indicators:
+                    // ! = route flap (single-flow only)
+                    // ~ = asymmetric routing (single-flow only)
+                    // ^ = TTL manipulation (all flow modes)
                     let has_flap = !multi_flow && !hop.route_changes.is_empty();
                     let has_asym = !multi_flow && hop.has_asymmetry();
-                    // Build indicator string (each takes 2 chars including space)
-                    let indicators = match (has_flap, has_asym) {
-                        (true, true) => " !~",
-                        (true, false) => " !",
-                        (false, true) => " ~",
-                        (false, false) => "",
+                    let has_ttl = hop.has_ttl_manip();
+                    // Build indicator string
+                    let mut ind = String::new();
+                    if has_flap {
+                        ind.push('!');
+                    }
+                    if has_asym {
+                        ind.push('~');
+                    }
+                    if has_ttl {
+                        ind.push('^');
+                    }
+                    let indicators = if ind.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", ind)
                     };
                     // Truncate to leave room for indicators
                     let max_len = 28 - indicators.len();
