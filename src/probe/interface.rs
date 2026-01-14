@@ -374,7 +374,7 @@ pub fn bind_socket_to_interface(socket: &Socket, info: &InterfaceInfo) -> Result
         use std::num::NonZeroU32;
         // macOS uses interface index binding
         socket
-            .bind_device_by_index(NonZeroU32::new(info.index))
+            .bind_device_by_index_v4(NonZeroU32::new(info.index))
             .map_err(|e| {
                 anyhow!(
                     "Failed to bind socket to interface '{}' (index {}): {}",

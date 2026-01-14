@@ -288,7 +288,8 @@ pub fn recv_icmp_with_ttl(socket: &Socket, buffer: &mut [u8], ipv6: bool) -> Res
     msg.msg_iov = &mut iov;
     msg.msg_iovlen = 1;
     msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
-    msg.msg_controllen = cmsg_buf.len();
+    // msg_controllen type differs: usize on Linux, u32 on macOS
+    msg.msg_controllen = cmsg_buf.len() as _;
 
     // Receive the packet
     let len = unsafe { libc::recvmsg(socket.as_raw_fd(), &mut msg, 0) };

@@ -1,6 +1,6 @@
 [package]
 name = "ttl"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2024"
 description = "Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment"
 license = "MIT OR Apache-2.0"
@@ -30,7 +30,7 @@ libc = "0.2"
 hickory-resolver = "0.24"
 
 # HTTP client for PeeringDB API
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # ASN/Geo databases
 maxminddb = "0.27"
