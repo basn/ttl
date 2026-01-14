@@ -7,12 +7,20 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use ttl::config::Config;
-use ttl::state::session::{Session, Target};
+use ttl::state::session::{PmtudPhase, Session, Target};
 
 /// Create a test session for 8.8.8.8 with default config
 fn test_session() -> Session {
     let target = Target::new("8.8.8.8".to_string(), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
     let config = Config::default();
+    Session::new(target, config)
+}
+
+/// Create a test session with PMTUD enabled
+fn test_session_with_pmtud() -> Session {
+    let target = Target::new("8.8.8.8".to_string(), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+    let mut config = Config::default();
+    config.pmtud = true;
     Session::new(target, config)
 }
 
@@ -266,5 +274,70 @@ fn test_serialization_roundtrip() {
     if let Some(hop) = loaded.hop(1) {
         assert_eq!(hop.sent, 1);
         assert_eq!(hop.received, 1);
+    }
+}
+
+#[test]
+fn test_pmtud_state_lifecycle() {
+    let mut session = test_session_with_pmtud();
+
+    // PMTUD should be initialized
+    assert!(session.pmtud.is_some());
+    let pmtud = session.pmtud.as_ref().unwrap();
+    assert_eq!(pmtud.phase, PmtudPhase::WaitingForDestination);
+    assert_eq!(pmtud.min_size, 68); // IPv4 minimum
+    assert_eq!(pmtud.max_size, 1500);
+    assert_eq!(pmtud.discovered_mtu, None);
+
+    // Simulate PMTUD progress
+    if let Some(pmtud) = session.pmtud.as_mut() {
+        pmtud.start_search();
+        assert_eq!(pmtud.phase, PmtudPhase::Searching);
+
+        // Record some successes/failures
+        pmtud.record_success();
+        pmtud.record_success(); // 2 consecutive successes raise min_size
+        assert!(pmtud.min_size > 68);
+    }
+
+    // Reset should reinitialize PMTUD state
+    session.reset_stats();
+
+    assert!(session.pmtud.is_some());
+    let pmtud = session.pmtud.as_ref().unwrap();
+    assert_eq!(pmtud.phase, PmtudPhase::WaitingForDestination);
+    assert_eq!(pmtud.min_size, 68);
+    assert_eq!(pmtud.max_size, 1500);
+    assert_eq!(pmtud.discovered_mtu, None);
+}
+
+#[test]
+fn test_pmtud_binary_search_convergence() {
+    let mut session = test_session_with_pmtud();
+
+    if let Some(pmtud) = session.pmtud.as_mut() {
+        pmtud.start_search();
+
+        // Simulate fragmentation needed at 1400
+        pmtud.record_frag_needed(1400);
+        assert!(pmtud.max_size <= 1400);
+
+        // Continue binary search until converged
+        while !pmtud.is_converged() && pmtud.phase == PmtudPhase::Searching {
+            // Simulate: sizes <= 1400 succeed, > 1400 fail
+            if pmtud.current_size <= 1400 {
+                pmtud.record_success();
+                pmtud.record_success();
+            } else {
+                pmtud.record_failure();
+                pmtud.record_failure();
+            }
+        }
+
+        assert_eq!(pmtud.phase, PmtudPhase::Complete);
+        assert!(pmtud.discovered_mtu.is_some());
+        // Should converge near 1400 (within 8 bytes)
+        let mtu = pmtud.discovered_mtu.unwrap();
+        assert!(mtu >= 1392 && mtu <= 1400);
     }
 }
