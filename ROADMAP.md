@@ -147,7 +147,7 @@
 - [ ] World map visualization (ASCII/Unicode geographic path display)
 
 ### Testing & Code Quality
-- [ ] Integration tests for probe→receive→state pipeline
+- [x] Integration tests for probe→receive→state pipeline
 - [ ] Property-based/fuzz tests for packet parsing (correlate.rs)
 - [ ] IX lookup performance: radix trie for O(prefix_len) instead of O(n) linear scan
 - [x] Refactor Receiver::new() 9-arg signature to config struct

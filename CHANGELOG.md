@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Linux x86_64 and aarch64 (cross-compiled)
   - macOS x86_64 (Intel) and aarch64 (Apple Silicon)
   - Pre-built binaries attached to GitHub releases
+  - SHA256 checksums included for verification
+  - cargo-audit security check before release
 - **Rate limiting** (`--rate`): Limit probes per second to avoid triggering router rate limits
   - Useful for slow links or avoiding overwhelming targets
   - `--rate 0` = unlimited (default), `--rate 10` = 10 probes/sec max
@@ -400,5 +402,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Troubleshooting section in README (permissions, high loss, IPv6, DNS)
 
 ### Tests
-- 32 unit tests covering ICMP parsing, stats calculation, session state
+- 83 unit tests covering ICMP parsing, stats calculation, session state
+- 10 integration tests for probe→state pipeline
 - Tests for IPv6 extension headers, ECMP scenarios, edge cases
