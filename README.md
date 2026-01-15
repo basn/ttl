@@ -6,6 +6,8 @@
 
 Modern traceroute/mtr-style TUI with hop stats and optional ASN/geo enrichment.
 
+![ttl screenshot](ttlss.png)
+
 [![Crates.io](https://img.shields.io/crates/v/ttl.svg)](https://crates.io/crates/ttl)
 [![CI](https://github.com/lance0/ttl/actions/workflows/ci.yml/badge.svg)](https://github.com/lance0/ttl/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
