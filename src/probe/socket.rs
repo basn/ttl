@@ -31,7 +31,7 @@ pub fn check_permissions() -> Result<SocketCapability> {
     //
     // Since RAW sockets require root, traceroute on macOS needs sudo.
 
-    // Check if we can create RAW socket (needed for receiving)
+    // Check if we can create RAW IPv4 socket (needed for receiving)
     if create_raw_icmp_socket(false).is_err() {
         return Err(anyhow!(
             "Insufficient permissions for ICMP sockets.\n\n\
@@ -39,6 +39,11 @@ pub fn check_permissions() -> Result<SocketCapability> {
              messages from intermediate routers.\n\n\
              Fix: Run with sudo: sudo ttl <target>"
         ));
+    }
+
+    // Check RAW IPv6 and warn if unavailable
+    if create_raw_icmp_socket(true).is_err() {
+        eprintln!("Note: IPv6 raw sockets unavailable; IPv6 traceroute will not work.");
     }
 
     // Also verify DGRAM works for sending (should always work if RAW works)
@@ -151,6 +156,7 @@ pub fn create_send_socket(ipv6: bool) -> Result<SocketInfo> {
             });
         }
         // Fall back to RAW (won't support TTL but might work for something)
+        eprintln!("Warning: DGRAM socket failed, using RAW. Per-probe TTL control may not work.");
         let socket = create_raw_icmp_socket(ipv6)?;
         return Ok(SocketInfo {
             socket,

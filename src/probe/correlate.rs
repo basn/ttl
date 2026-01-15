@@ -512,6 +512,11 @@ fn parse_icmp_error_payload_v4_with_mtu(
 
             // Payload fallback: macOS DGRAM send may modify identifier
             // Original ICMP: [0-7] header, [8..] payload
+            //
+            // NOTE: RFC 792 allows routers to quote only 8 bytes of original payload.
+            // If a router quotes the minimum AND macOS rewrites the ICMP identifier,
+            // this hop will be unmatchable (shows as timeout). This is rare in practice
+            // as most modern routers quote more data per RFC 4884.
             if original_payload.len() >= 12
                 && let Some((_, payload_seq)) =
                     extract_id_from_payload(&original_payload[8..], our_identifier)
@@ -653,6 +658,10 @@ fn parse_icmp_error_payload_v6_with_mtu(
 
             // Payload fallback: macOS DGRAM send may modify identifier
             // Original ICMPv6: [0-7] header, [8..] payload
+            //
+            // NOTE: RFC 4443 allows routers to quote minimum data. If a router quotes
+            // only the minimum AND macOS rewrites the ICMPv6 identifier, this hop will
+            // be unmatchable (shows as timeout). Rare in practice.
             if original_payload.len() >= 12
                 && let Some((_, payload_seq)) =
                     extract_id_from_payload(&original_payload[8..], our_identifier)
