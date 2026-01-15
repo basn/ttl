@@ -164,6 +164,10 @@ ttl 1.1.1.1 --theme dracula    # Start with theme
 
 *Pre-built binaries are built on `macos-latest` (Tahoe). Older macOS versions may have display issues - use `cargo install ttl` to compile from source.
 
+## Known Issues
+
+- **iTerm2 on macOS Sequoia**: Initial display may render incorrectly. Press `r` to reset, or use Terminal.app.
+
 ## Known Limitations
 
 ### Permissions
