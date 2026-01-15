@@ -74,6 +74,9 @@ pub async fn run_tui(
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    // Clear terminal before first draw (fixes display issues on some terminals like macOS Sequoia)
+    terminal.clear()?;
+
     // Find initial theme index
     let theme_names = Theme::list();
     let initial_index = theme_names
