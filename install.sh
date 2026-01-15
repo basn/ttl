@@ -60,8 +60,33 @@ else
 fi
 
 echo "Installed ttl to $INSTALL_DIR/ttl"
-echo ""
-echo "To run without sudo (Linux):"
-echo "  sudo setcap cap_net_raw+ep $INSTALL_DIR/ttl"
-echo ""
-echo "Usage: ttl 8.8.8.8"
+
+# Set capability on Linux so ttl can run without sudo
+if [ "$OS" = "linux" ]; then
+  echo ""
+  echo "ttl requires raw socket access for ICMP probing."
+  echo "You can either:"
+  echo "  1. Run with sudo each time: sudo ttl <target>"
+  echo "  2. Grant capability now (recommended): allows running without sudo"
+  echo ""
+  printf "Grant cap_net_raw capability? [Y/n] "
+  read -r REPLY
+  case "$REPLY" in
+    [nN]*)
+      echo "Skipped. Run with: sudo ttl <target>"
+      ;;
+    *)
+      echo "Running: sudo setcap cap_net_raw+ep $INSTALL_DIR/ttl"
+      if sudo setcap cap_net_raw+ep "$INSTALL_DIR/ttl"; then
+        echo ""
+        echo "Done! You can now run: ttl <target>"
+      else
+        echo "Failed to set capability. Run with: sudo ttl <target>"
+      fi
+      ;;
+  esac
+else
+  # macOS - no capabilities, always needs sudo
+  echo ""
+  echo "On macOS, run with sudo: sudo ttl <target>"
+fi
