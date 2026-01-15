@@ -21,33 +21,36 @@ pub struct SocketInfo {
 }
 
 /// Check socket permissions and return capability level
-/// On macOS, prefers DGRAM because RAW sockets don't support IP_TTL setsockopt
+/// On macOS, requires RAW socket for receiving ICMP Time Exceeded messages
+/// (DGRAM sockets only receive Echo Reply, not error messages from routers)
 #[cfg(target_os = "macos")]
 pub fn check_permissions() -> Result<SocketCapability> {
-    // On macOS, prefer DGRAM because RAW doesn't support IP_TTL for traceroute
-    // Check both IPv4 and IPv6 DGRAM availability
-    let ipv4_dgram = create_dgram_icmp_socket().is_ok();
-    let ipv6_dgram = create_dgram_icmpv6_socket().is_ok();
+    // On macOS:
+    // - Send socket uses DGRAM (supports IP_TTL for per-probe TTL control)
+    // - Receive socket must use RAW (DGRAM can't receive Time Exceeded from routers)
+    //
+    // Since RAW sockets require root, traceroute on macOS needs sudo.
 
-    if ipv4_dgram {
-        if !ipv6_dgram {
-            eprintln!(
-                "Note: IPv6 DGRAM sockets unavailable; IPv6 traceroute may not work correctly."
-            );
-        }
-        return Ok(SocketCapability::Dgram);
+    // Check if we can create RAW socket (needed for receiving)
+    if create_raw_icmp_socket(false).is_err() {
+        return Err(anyhow!(
+            "Insufficient permissions for ICMP sockets.\n\n\
+             On macOS, raw sockets are required to receive ICMP Time Exceeded\n\
+             messages from intermediate routers.\n\n\
+             Fix: Run with sudo: sudo ttl <target>"
+        ));
     }
 
-    // Fall back to RAW (won't work properly for traceroute but may work for other uses)
-    if create_raw_icmp_socket(false).is_ok() {
-        eprintln!("Warning: Using raw sockets on macOS. Traceroute may not work correctly.");
-        return Ok(SocketCapability::Raw);
+    // Also verify DGRAM works for sending (should always work if RAW works)
+    if create_dgram_icmp_socket().is_err() {
+        return Err(anyhow!(
+            "Failed to create ICMP socket for sending.\n\n\
+             Fix: Run with sudo: sudo ttl <target>"
+        ));
     }
 
-    Err(anyhow!(
-        "Insufficient permissions for ICMP sockets.\n\n\
-         Fix: Run with sudo: sudo ttl <target>"
-    ))
+    // Return Raw capability since we're using RAW for receiving
+    Ok(SocketCapability::Raw)
 }
 
 /// Check socket permissions and return capability level
@@ -154,22 +157,14 @@ pub fn create_send_socket(ipv6: bool) -> Result<SocketInfo> {
 }
 
 /// Create a socket for receiving ICMP responses
-/// On macOS, uses DGRAM socket for consistency with send socket
+/// On macOS, must use RAW socket to receive ICMP Time Exceeded messages
+/// (DGRAM sockets only receive Echo Reply, not error messages from intermediate routers)
 pub fn create_recv_socket(ipv6: bool) -> Result<SocketInfo> {
-    #[cfg(target_os = "macos")]
-    {
-        // Try DGRAM first on macOS (no IP header in received packets)
-        if let Ok(socket) = create_dgram_icmp_socket_any(ipv6) {
-            // Increase receive buffer size for high probe rates
-            let _ = socket.set_recv_buffer_size(1024 * 1024);
-            return Ok(SocketInfo {
-                socket,
-                is_dgram: true,
-            });
-        }
-    }
+    // On macOS, DGRAM ICMP sockets cannot receive ICMP Time Exceeded messages
+    // from intermediate routers - they only receive Echo Reply messages.
+    // We must use RAW sockets for receiving, which requires root.
+    // (The send socket still uses DGRAM for TTL support.)
 
-    // Fall back to RAW (Linux, or macOS if DGRAM fails)
     let socket = create_raw_icmp_socket(ipv6)?;
 
     // Increase receive buffer size for high probe rates

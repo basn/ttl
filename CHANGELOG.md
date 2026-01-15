@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-01-15
+
+### Fixed
+- **macOS traceroute 100% packet loss**: Fix ICMP traceroute showing all hops as `* * *`
+  - DGRAM ICMP sockets cannot receive ICMP Time Exceeded messages from intermediate routers
+  - Now uses RAW socket for receiving (can receive all ICMP types) while keeping DGRAM for sending (supports IP_TTL)
+  - Requires `sudo` on macOS since RAW sockets need root privileges
+  - Clear error message when run without elevated privileges
+
 ## [0.11.0] - 2026-01-14
 
 ### Fixed

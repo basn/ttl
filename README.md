@@ -163,7 +163,7 @@ ttl 1.1.1.1 --theme dracula    # Start with theme
 
 ### Permissions
 - Linux: Requires `CAP_NET_RAW` capability or root (see [Permissions](#permissions-linux))
-- macOS: Requires root (`sudo ttl target`)
+- macOS: Requires root (`sudo ttl target`) - RAW sockets are needed to receive ICMP Time Exceeded messages from intermediate routers
 
 ### Protocol Limitations
 - ICMP probes: Some networks filter ICMP, try `-p udp` or `-p tcp`
