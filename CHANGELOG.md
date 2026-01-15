@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-01-15
+
+### Fixed
+- **macOS Sequoia display issue**: Fix TUI rendering issue on macOS 15 (Sequoia)
+  - Binary built on Sonoma (14) had display issues on Sequoia (15)
+  - Now builds on `macos-latest` runner for better forward compatibility
+
 ## [0.11.1] - 2026-01-15
 
 ### Fixed
