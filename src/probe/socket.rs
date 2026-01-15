@@ -66,10 +66,10 @@ pub fn check_permissions() -> Result<SocketCapability> {
 }
 
 /// Check socket permissions and return capability level
-/// On Linux, prefers RAW for full functionality
+/// On Linux, requires RAW sockets for traceroute functionality
 #[cfg(not(target_os = "macos"))]
 pub fn check_permissions() -> Result<SocketCapability> {
-    // Try raw socket first (full functionality)
+    // RAW sockets required - DGRAM can't receive Time Exceeded from intermediate routers
     if create_raw_icmp_socket(false).is_ok() {
         // Also check IPv6 RAW - warn if unavailable
         if create_raw_icmp_socket(true).is_err() {
@@ -78,26 +78,16 @@ pub fn check_permissions() -> Result<SocketCapability> {
         return Ok(SocketCapability::Raw);
     }
 
-    // Try unprivileged ICMP (SOCK_DGRAM with IPPROTO_ICMP)
-    if create_dgram_icmp_socket().is_ok() {
-        eprintln!("Warning: Using unprivileged ICMP sockets. Some features may be limited.");
-        // Also check IPv6 DGRAM - warn if unavailable
-        if create_dgram_icmpv6_socket().is_err() {
-            eprintln!("Note: IPv6 ICMP sockets unavailable; IPv6 traceroute will not work.");
-        }
-        return Ok(SocketCapability::Dgram);
-    }
-
     let binary_path = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "ttl".to_string());
 
     Err(anyhow!(
         "Insufficient permissions for raw sockets.\n\n\
-         Fix options:\n\
-         \u{2022} Run with sudo: sudo ttl <target>\n\
-         \u{2022} Add capability: sudo setcap cap_net_raw+ep {}\n\
-         \u{2022} Enable unprivileged ICMP: sudo sysctl -w net.ipv4.ping_group_range='0 65534'",
+         Fix (one-time):\n\
+         \u{2022} sudo setcap cap_net_raw+ep {}\n\n\
+         Or run with sudo:\n\
+         \u{2022} sudo ttl <target>",
         binary_path
     ))
 }
