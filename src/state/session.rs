@@ -6,6 +6,9 @@ use std::time::Duration;
 
 use crate::config::Config;
 
+/// Window size for recent RTT/result tracking (used for sparklines, jitter calculation)
+const RECENT_WINDOW_SIZE: usize = 60;
+
 /// Identifies a specific probe for correlation
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ProbeId {
@@ -175,7 +178,7 @@ impl ResponderStats {
             jitter_avg: 0.0,
             jitter_max: 0.0,
             last_rtt: None,
-            recent: VecDeque::with_capacity(60),
+            recent: VecDeque::with_capacity(RECENT_WINDOW_SIZE),
             samples: VecDeque::with_capacity(256),
         }
     }
@@ -240,7 +243,7 @@ impl ResponderStats {
 
         // Rolling window for sparkline
         self.recent.push_back(Some(rtt));
-        if self.recent.len() > 60 {
+        if self.recent.len() > RECENT_WINDOW_SIZE {
             self.recent.pop_front();
         }
 
@@ -255,7 +258,7 @@ impl ResponderStats {
     #[allow(dead_code)]
     pub fn record_timeout(&mut self) {
         self.recent.push_back(None);
-        if self.recent.len() > 60 {
+        if self.recent.len() > RECENT_WINDOW_SIZE {
             self.recent.pop_front();
         }
     }
@@ -856,7 +859,7 @@ impl Hop {
             timeouts: 0,
             responders: HashMap::new(),
             primary: None,
-            recent_results: VecDeque::with_capacity(60),
+            recent_results: VecDeque::with_capacity(RECENT_WINDOW_SIZE),
             flow_paths: HashMap::new(),
             nat_info: None,
             rate_limit: None,
@@ -902,7 +905,7 @@ impl Hop {
 
         // Track in hop-level sparkline
         self.recent_results.push_back(true);
-        if self.recent_results.len() > 60 {
+        if self.recent_results.len() > RECENT_WINDOW_SIZE {
             self.recent_results.pop_front();
         }
 
@@ -970,7 +973,7 @@ impl Hop {
 
         // Track in hop-level sparkline (false = timeout/loss)
         self.recent_results.push_back(false);
-        if self.recent_results.len() > 60 {
+        if self.recent_results.len() > RECENT_WINDOW_SIZE {
             self.recent_results.pop_front();
         }
     }

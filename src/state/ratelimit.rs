@@ -146,7 +146,9 @@ fn calculate_recent_loss(recent: &VecDeque<bool>) -> f64 {
     (losses as f64 / recent.len() as f64) * 100.0
 }
 
-/// Find loss percentage of next hop that has responses
+/// Find loss percentage of next hop that has responses.
+/// Returns None if no downstream hop has enough data (including for the last hop,
+/// which affects rate limit detection - last hop can't be confirmed as rate-limited).
 fn find_next_responding_hop_loss(session: &Session, ttl: u8) -> Option<f64> {
     for next_ttl in (ttl + 1)..=session.hops.len() as u8 {
         if let Some(hop) = session.hop(next_ttl) {
