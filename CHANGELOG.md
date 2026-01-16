@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-01-16
+
+### Fixed
+- **Hop detail view stats**: Fixed "Sent: 0" display bug in hop detail panel
+  - Hop detail now correctly shows hop-level sent/received/loss stats
+  - Previously showed per-responder `sent` (always 0) instead of hop-level `sent`
+  - Note: Per-responder sent can't be tracked (we don't know which responder will reply before sending)
+
 ## [0.12.2] - 2026-01-16
 
 ### Improved

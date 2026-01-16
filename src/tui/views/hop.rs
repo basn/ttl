@@ -129,16 +129,24 @@ impl Widget for HopDetailView<'_> {
 
             lines.push(Line::from(""));
 
-            // Stats
+            // Stats (use hop-level sent/loss since we can't attribute probes to responders before reply)
+            let hop_loss = self.hop.loss_pct();
+            // Label as "Hop totals" when multiple responders exist (ECMP) to avoid confusion
+            let stats_label = if self.hop.responders.len() > 1 {
+                "  Hop totals: "
+            } else {
+                "  "
+            };
             lines.push(Line::from(vec![
-                Span::styled("  Sent: ", Style::default().fg(self.theme.text_dim)),
-                Span::raw(format!("{:<8}", stats.sent)),
-                Span::styled("Received: ", Style::default().fg(self.theme.text_dim)),
-                Span::raw(format!("{:<8}", stats.received)),
+                Span::styled(stats_label, Style::default().fg(self.theme.text_dim)),
+                Span::styled("Sent: ", Style::default().fg(self.theme.text_dim)),
+                Span::raw(format!("{:<6}", self.hop.sent)),
+                Span::styled("Recv: ", Style::default().fg(self.theme.text_dim)),
+                Span::raw(format!("{:<6}", self.hop.received)),
                 Span::styled("Loss: ", Style::default().fg(self.theme.text_dim)),
                 Span::styled(
-                    format!("{:.1}%", stats.loss_pct()),
-                    if stats.loss_pct() > 10.0 {
+                    format!("{:.1}%", hop_loss),
+                    if hop_loss > 10.0 {
                         Style::default().fg(self.theme.error)
                     } else {
                         Style::default().fg(self.theme.success)

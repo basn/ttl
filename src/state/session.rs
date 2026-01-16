@@ -132,6 +132,9 @@ pub struct ResponderStats {
     pub mpls_labels: Option<Vec<MplsLabel>>,
 
     // Counters
+    // Note: sent is kept for JSON schema compatibility but not used in TUI
+    // (we can't attribute probes to responders before receiving a reply;
+    // use Hop.sent for hop-level probe counts)
     pub sent: u64,
     pub received: u64,
 
@@ -263,7 +266,9 @@ impl ResponderStats {
         }
     }
 
-    /// Loss percentage
+    /// Loss percentage (per-responder, not accurate since sent is always 0)
+    /// Use Hop::loss_pct() for accurate hop-level loss calculation.
+    #[allow(dead_code)]
     pub fn loss_pct(&self) -> f64 {
         if self.sent == 0 {
             0.0
