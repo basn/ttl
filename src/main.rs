@@ -42,6 +42,12 @@ use tui::theme::Theme;
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Handle shell completion generation (before validation, doesn't need targets)
+    if let Some(ref shell) = args.completions {
+        generate_completions(shell);
+        return Ok(());
+    }
+
     // Validate arguments
     if let Err(e) = args.validate() {
         eprintln!("Error: {}", e);
@@ -872,4 +878,19 @@ async fn run_streaming_mode(
     ratelimit_handle.await?;
 
     Ok(())
+}
+
+/// Generate shell completions for the specified shell
+fn generate_completions(shell: &str) {
+    use clap::CommandFactory;
+    use clap_complete::{Shell, generate};
+    let mut cmd = Args::command();
+    let shell = match shell {
+        "bash" => Shell::Bash,
+        "zsh" => Shell::Zsh,
+        "fish" => Shell::Fish,
+        "powershell" => Shell::PowerShell,
+        _ => unreachable!(),
+    };
+    generate(shell, &mut cmd, "ttl", &mut std::io::stdout());
 }

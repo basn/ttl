@@ -40,7 +40,7 @@ For detailed documentation: https://github.com/lance0/ttl/blob/master/docs/FEATU
 ")]
 pub struct Args {
     /// Target hosts to trace (IP address or hostname)
-    #[arg(required = true)]
+    #[arg(required_unless_present = "completions")]
     pub targets: Vec<String>,
 
     /// Number of probes to send (0 = infinite)
@@ -159,6 +159,10 @@ pub struct Args {
     /// Source IP address for probes
     #[arg(long = "source-ip", value_name = "IP")]
     pub source_ip: Option<std::net::IpAddr>,
+
+    /// Generate shell completions and exit
+    #[arg(long, value_name = "SHELL", value_parser = ["bash", "zsh", "fish", "powershell"])]
+    pub completions: Option<String>,
 }
 
 impl Args {

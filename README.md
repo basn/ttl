@@ -115,6 +115,19 @@ sudo setcap cap_net_raw+ep $(which ttl)
 ttl 8.8.8.8
 ```
 
+### Shell Completions
+
+```bash
+# Bash
+ttl --completions bash > ~/.local/share/bash-completion/completions/ttl
+
+# Zsh (add ~/.zfunc to fpath in .zshrc first)
+ttl --completions zsh > ~/.zfunc/_ttl
+
+# Fish
+ttl --completions fish > ~/.config/fish/completions/ttl.fish
+```
+
 ## Usage Examples
 
 ### Interactive TUI
