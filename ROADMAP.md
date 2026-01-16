@@ -1,6 +1,6 @@
 # ttl Roadmap
 
-## Current Status (v0.11.1)
+## Current Status (v0.12.3)
 
 ### Core Features
 - [x] ICMP Echo probing with TTL sweep
@@ -23,6 +23,8 @@
 - [x] Race-free probe correlation (shared pending map)
 - [x] Terminal state cleanup on error/panic
 - [x] Interface binding (`--interface`, `--recv-any`)
+- [x] Shell completions (`--completions bash/zsh/fish/powershell`)
+- [x] Terminal injection protection (sanitize external data)
 
 ### Probing Modes
 - [x] ICMP Echo (default for privileged users)
@@ -132,6 +134,23 @@
 - [x] Payload-based correlation fallback for RAW receive paths
 - [x] Restore Linux unprivileged ICMP support (broken in v0.11.0)
 - [x] IPv6 DGRAM availability check with warning on macOS
+
+### v0.12.0 - Shell Completions (Released)
+- [x] Shell completion generation (`--completions bash/zsh/fish/powershell`)
+- [x] Dependency updates (hickory-resolver 0.25, socket2 0.6, reqwest 0.13)
+
+### v0.12.1 - Security & Polish (Released)
+- [x] Terminal injection protection (sanitize DNS hostnames, ASN names, IX info)
+- [x] Fixed `--count` semantics (now counts probe rounds, not total probes)
+- [x] Port overflow validation (`--src-port` + `--flows` bounds checking)
+- [x] Sequence wrap prevention (reject timeout > 256 × interval)
+
+### v0.12.2 - Documentation (Released)
+- [x] Improved Quick Start with prominent Linux setcap instructions
+
+### v0.12.3 - Bug Fix (Released)
+- [x] Fixed hop detail view showing "Sent: 0" (was using wrong counter)
+- [x] Added "Hop totals" label for ECMP clarity
 
 ### v1.0.0 - BGP & Routing Integration
 - [ ] Looking glass integration (query public route servers)
