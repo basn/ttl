@@ -245,7 +245,9 @@ impl Args {
         if self.timeout > 256.0 * self.interval {
             return Err(format!(
                 "Timeout ({:.1}s) cannot exceed 256 × interval ({:.1}s = {:.1}s) to prevent sequence wrap",
-                self.timeout, self.interval, 256.0 * self.interval
+                self.timeout,
+                self.interval,
+                256.0 * self.interval
             ));
         }
 
