@@ -190,6 +190,8 @@ sudo ttl cloudflare.com
 
 TTL queries PeeringDB to identify IX points. The hop detail view shows IX name, city, and country.
 
+For higher rate limits, set `PEERINGDB_API_KEY` (get one free at [peeringdb.com](https://www.peeringdb.com/apidocs/#operation/api_key_list)).
+
 ### Catch Flapping Routes
 
 Unstable BGP or failover issues cause intermittent problems that are hard to catch:
