@@ -53,7 +53,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh && cargo install 
 - **Great TUI** with themes, sparklines, and session export
 - **Scriptable** - JSON, CSV, and text report output
 
-See [docs/FEATURES.md](docs/FEATURES.md) for detailed feature documentation.
+See [docs/FEATURES.md](docs/FEATURES.md) for detailed documentation, including optional setup for [GeoIP](docs/FEATURES.md#geoip-location) and [IX detection](docs/FEATURES.md#ix-detection).
 
 ## Installation
 
@@ -195,9 +195,7 @@ See exactly where your traffic peers with other networks:
 sudo ttl cloudflare.com
 ```
 
-TTL queries PeeringDB to identify IX points. The hop detail view shows IX name, city, and country.
-
-For higher rate limits, set `PEERINGDB_API_KEY` (get one free at [peeringdb.com](https://www.peeringdb.com/apidocs/#operation/api_key_list)).
+TTL queries PeeringDB to identify IX points. The hop detail view shows IX name, city, and country. Works out of the box; optionally set `PEERINGDB_API_KEY` for higher rate limits. See [docs/FEATURES.md](docs/FEATURES.md#ix-detection) for setup details.
 
 ### Catch Flapping Routes
 

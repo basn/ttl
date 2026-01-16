@@ -219,16 +219,74 @@ ttl 8.8.8.8 --geoip-db /path/to/GeoLite2-City.mmdb
 ttl 8.8.8.8 --no-geo  # Disable
 ```
 
-Requires a MaxMind GeoLite2 database. Get one free at [maxmind.com](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
+Shows city, region, and country for each hop. Requires a MaxMind GeoLite2-City database (free).
+
+**Setup:**
+
+1. Create a free MaxMind account at [maxmind.com/en/geolite2/signup](https://www.maxmind.com/en/geolite2/signup)
+
+2. Log in and go to **Download Files** in the left sidebar
+
+3. Download **GeoLite2 City** (the `.mmdb` file, not CSV)
+
+4. Place the database file in one of these locations (checked in order):
+   ```
+   ~/.local/share/ttl/GeoLite2-City.mmdb   # Linux
+   ~/Library/Application Support/ttl/GeoLite2-City.mmdb  # macOS
+   ~/.config/ttl/GeoLite2-City.mmdb
+   ./GeoLite2-City.mmdb                    # Current directory
+   /usr/share/GeoIP/GeoLite2-City.mmdb     # System-wide Linux
+   /var/lib/GeoIP/GeoLite2-City.mmdb       # System-wide Linux (alt)
+   ```
+
+   Or specify a custom path:
+   ```bash
+   ttl 8.8.8.8 --geoip-db /path/to/GeoLite2-City.mmdb
+   ```
+
+**Note:** GeoIP is optional. Without the database, ttl works normally but won't show location data. MaxMind updates their database weekly; re-download periodically for accuracy.
 
 ### IX Detection
 
 ```bash
-ttl 8.8.8.8           # IX detection enabled
+ttl 8.8.8.8           # IX detection enabled (default)
 ttl 8.8.8.8 --no-ix   # Disable
 ```
 
-Identifies Internet Exchange points using PeeringDB data. Set `PEERINGDB_API_KEY` environment variable for higher rate limits.
+Identifies Internet Exchange points in your path using PeeringDB data. When a hop's IP matches an IX peering LAN prefix, the hop detail view shows the IX name, city, and country.
+
+**How it works:**
+
+IX detection works out of the box with no configuration. On first use, ttl fetches IX prefix data from PeeringDB and caches it locally (`~/.cache/ttl/peeringdb/ix_cache.json`) for 24 hours.
+
+**API Key (optional but recommended):**
+
+Anonymous PeeringDB access has rate limits. For frequent use or scripting, set up an API key:
+
+1. Create a free PeeringDB account at [peeringdb.com/register](https://www.peeringdb.com/register)
+
+2. Log in and go to your profile (click username in top right)
+
+3. Scroll to **API Keys** section and click **Add API Key**
+
+4. Give it a name (e.g., "ttl") and copy the generated key
+
+5. Set the environment variable:
+
+   **One-time use:**
+   ```bash
+   PEERINGDB_API_KEY=your_key_here ttl 8.8.8.8
+   ```
+
+   **Persistent (add to your shell profile):**
+   ```bash
+   # ~/.bashrc or ~/.zshrc
+   export PEERINGDB_API_KEY="your_key_here"
+   ```
+
+   Then reload your shell or run `source ~/.bashrc`.
+
+**Note:** IX detection is optional. Without an API key, ttl uses anonymous access which works fine for occasional use. The API key just removes rate limiting for heavy usage.
 
 ## Statistics
 
