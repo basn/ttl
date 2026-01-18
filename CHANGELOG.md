@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.5] - 2026-01-18
 
 ### Fixed
 - **IPv6 ICMP traceroute**: Fix 100% packet loss on Linux for destination hop
@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added send socket polling for Echo Reply in IPv6 ICMP mode (Linux-only)
   - Intermediate hops (Time Exceeded) were unaffected; only destination detection was broken
   - ICMPv6 Echo Request now uses correct type 128 (was incorrectly using type 8)
+
+### Improved
+- **Hop detail dialog**: Add `Enter` and `q` keys to close dialog (PR #6 by @themoog)
+  - `Enter` now toggles the dialog (open and close)
+  - `q` provides familiar quit-key for TUI users
+  - Improves accessibility for users with non-functional Escape keys
 
 ### Changed
 - **Cargo.lock**: Now tracked in version control for reproducible builds
