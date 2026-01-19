@@ -572,7 +572,10 @@ fn test_non_responding_hop_probing_after_completion() {
 
     // Verify sent counter incremented (not frozen)
     let hop2 = session.hop(2).unwrap();
-    assert_eq!(hop2.sent, 3, "Non-responding hop sent counter should increment after completion");
+    assert_eq!(
+        hop2.sent, 3,
+        "Non-responding hop sent counter should increment after completion"
+    );
     assert_eq!(hop2.received, 0);
     assert_eq!(hop2.timeouts, 3);
 
@@ -653,7 +656,10 @@ fn test_max_ttl_warning_conditions() {
     };
     let session1 = Session::new(target.clone(), config1);
     let should_warn1 = session1.dest_ttl.is_none() && session1.config.max_ttl == 30;
-    assert!(should_warn1, "Should warn when dest not found with default max_ttl");
+    assert!(
+        should_warn1,
+        "Should warn when dest not found with default max_ttl"
+    );
 
     // Case 2: Default max_ttl (30) and destination IS found -> no warning
     let config2 = Config {
@@ -673,7 +679,10 @@ fn test_max_ttl_warning_conditions() {
     };
     let session3 = Session::new(target.clone(), config3);
     let should_warn3 = session3.dest_ttl.is_none() && session3.config.max_ttl == 30;
-    assert!(!should_warn3, "Should not warn when max_ttl is not default 30");
+    assert!(
+        !should_warn3,
+        "Should not warn when max_ttl is not default 30"
+    );
 
     // Case 4: max_ttl explicitly set to 30 and dest not found -> still warns
     // (This is acceptable behavior per design decision)
@@ -683,7 +692,10 @@ fn test_max_ttl_warning_conditions() {
     };
     let session4 = Session::new(target.clone(), config4);
     let should_warn4 = session4.dest_ttl.is_none() && session4.config.max_ttl == 30;
-    assert!(should_warn4, "Warning shows even if 30 was explicitly set (acceptable)");
+    assert!(
+        should_warn4,
+        "Warning shows even if 30 was explicitly set (acceptable)"
+    );
 }
 
 #[test]
