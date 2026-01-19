@@ -47,18 +47,23 @@ See [docs/FEATURES.md](docs/FEATURES.md) for detailed documentation, including o
 
 ## Installation
 
-### Homebrew (macOS/Linux)
-
-```bash
-brew install lance0/tap/ttl
-```
-
-### From crates.io
+### From crates.io (Recommended)
 
 Requires [Rust](https://www.rust-lang.org/tools/install):
 
 ```bash
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Install ttl
 cargo install ttl
+```
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew install lance0/tap/ttl
 ```
 
 ### Pre-built Binaries
